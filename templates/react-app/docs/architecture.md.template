@@ -1,0 +1,123 @@
+# Architecture
+
+`__APP_TITLE__` is __APP_ARCHITECTURE__. The app owns its domain model, data access, and all content below `AppShell`. The platform owns the shell, shared interaction primitives, structural styles, and live cosmetic theme.
+
+Import shared components only from `@local-web/ui` and the Vite integration only from `@local-web/ui/vite`. Keep domain-specific components inside this repository. Add libraries only when the domain needs them; the platform does not require a router, state library, or backend framework.
+
+The checked-in `vendor/local-web-ui.tgz` is the immutable UI package used by this app. Its expected platform version is `__UI_VERSION__`. Update it through the central platform tooling rather than editing the artifact.
+
+`src/contextExport.ts` is app-owned and supplies the shared shell's Context export action. It starts with only the generated foundation state; extend its structured context as domain features gain reviewed, shareable current-state information.
+
+## Optional interactive HTML export
+
+UI 0.7.0 adds a separate self-contained interactive snapshot; template version 3
+and the existing script-free `LocalWebContextV1` context export are unchanged.
+Apps that do not opt in retain their shell markup and one-click `Export context`.
+Interactive-only apps show `Export interactive snapshot`; both capabilities use
+an accessible `Export` dialog offering `Context document` and `Interactive snapshot`.
+
+The app owns inclusion decisions, a versioned payload contract, coherent capture,
+one shared decoder, an offline entry reusing app components/content, controlled
+restorable state, explicit backend-action adaptations and domain acceptance tests.
+The framework owns the common envelope, canonical plain-JSON safety, identity
+checks, Vite packaging, download lifecycle, artifact CSP, offline notice and theme.
+It does not scrape the DOM, redact private data, replay mutations or synthesize APIs.
+
+`snapshotData` is frozen domain content needed by the reader (records, results,
+transformed service responses). `viewState` is the presentation position (tab,
+selection, filters, sort order). They are independent app-defined plain-JSON
+shapes: `{}` is valid for compiled/static snapshot content and for empty view state.
+Functions, dates, class instances, accessors, cycles, sparse arrays, non-finite
+numbers and unsafe object keys are rejected.
+
+Integration is app-owned, after adopting the UI through the central updater's
+reviewed dry-run/apply path, never by editing `vendor/local-web-ui.tgz`:
+
+1. Define `src/contract.ts` with `defineInteractiveExportContract({ id, version,
+   sensitivity, decodeSnapshot })` imported from `@local-web/ui`; export it as
+   named `contract` or default. Use a canonical lowercase ID, positive integer
+   version and a non-empty explicit notice for either `private` or `sensitive`.
+   Increment the version for incompatible payload shape or semantic changes.
+2. Implement the shared app-owned decoder to accept unknown input and return a
+   typed `{ snapshotData, viewState, title? }` or throw. Validate both shapes and
+   relationships, such as selected IDs existing in records or compiled content.
+   Import that exact module in hosted and offline entries. Decoder details stay
+   app-local; the framework shows generic errors.
+3. Supply `{ contract, buildSnapshot }` to `<AppShell app={app}
+   interactiveExport={interactiveExport}>…</AppShell>`. The builder closes over
+   current state, honours `AbortSignal`, and returns one coherent capture.
+4. Add `localWebInteractiveExport` alongside `localWebApp()` and existing Vite
+   plugins, importing build APIs only from `@local-web/ui/vite`:
+
+   ```ts
+   localWebInteractiveExport({
+     appId: '__APP_ID__', contract: './src/contract.ts', entry: './src/offline.tsx',
+   });
+   ```
+
+   These are module paths, not a contract metadata object. Build identity comes
+   from `local-web.json`, `package.json` and Git `HEAD`. Apps supply React/React DOM
+   peers, their real TypeScript declarations, and Vite when using the build API.
+5. In `src/offline.tsx`, import the same contract, app components and styles, then
+   call `mountInteractiveExport({ contract, render: ({ snapshotData, viewState }) =>
+   <App snapshotData={snapshotData} initialViewState={viewState} /> })` from
+   `@local-web/ui`. Lift UI state as needed instead of copying the app for export.
+
+For services, prefer one coherent same-origin snapshot of related state over
+racing requests. The framework invokes the decoder after `buildSnapshot()` and
+before fetching a template or downloading, then again before offline rendering.
+The first call validates the actual backend response: an unchanged template does
+not prove a changed backend response satisfies the contract.
+
+`payloadContractId` is `<app-id>/<contract-id>/v<version>`, the semantic agreement.
+`templateId` is SHA-256 over the normalized self-contained reader including code,
+styles/assets, shell, CSP, schema and app/build/contract metadata, excluding capture
+data, source maps and build paths. `compatibilityId` hashes schema, app ID, payload
+contract ID and template ID together. Hosted descriptor, fetched template and
+envelope must agree on all three before the app decoder proves payload semantics.
+The plugin emits a content-addressed same-origin template and automatically embeds
+the shell descriptor; the typed `virtual:local-web-interactive-export` module is
+also available. A stale open page fetches only its exact template and fails closed
+if missing or incompatible: no `latest` fallback or cross-version mixing.
+
+Notices appear before capture and in the artifact; classification is not encryption
+or redaction. Include only deliberate content, never credentials, environment
+values or unrelated private data. Snapshot data has a 5 MiB canonical-JSON limit
+covering `snapshotData`, `viewState` and optional title together
+(`MAX_INTERACTIVE_EXPORT_SNAPSHOT_BYTES`); complete HTML has a separate 20 MiB
+limit (`MAX_INTERACTIVE_EXPORT_ARTIFACT_BYTES`), neither app-overridable. Failures
+are generic and start no partial download; abort is normal, duplicate generation
+is blocked, focus is restored and anchors/object URLs are cleaned up.
+
+The single HTML file contains a classic runtime, styles, supported visual assets
+and an encoded canonical envelope in a non-executable `<template>`. There are no
+automatic network dependencies, external modules, source maps, sibling assets,
+CDNs or hosted services. Deliberate evidence hyperlinks remain allowed. The exact
+artifact policy is separate from hosted CSP and unchanged context-document CSP:
+
+```text
+default-src 'none'; connect-src 'none'; script-src 'sha256-<packaged-script-digest>'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:; child-src blob:; object-src 'none'; frame-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+```
+
+Only the hashed packaged script can execute; no inline event handlers or
+`unsafe-eval`. `connect-src 'none'` blocks fetch, XHR, WebSocket, EventSource and
+beacons. Inline styles allow React attributes while other directives block remote
+resources. Browsers ignore `frame-ancestors` in meta CSP, so this is not an
+anti-framing guarantee.
+
+Offline shell context is inert `Offline snapshot`, with no System Index link or
+recursive exports. The notice shows classification, explicit notice, capture time,
+source revision and frozen-content status. Bundled fallback theme/styles replace
+the hosted theme endpoint; captured effective light/dark mode is restored.
+System/Light/Dark controls use memory, never host storage; reload restores the
+capture. Use `useInteractiveExportEnvironment()` to freeze backend data read-only,
+disable actions with an offline explanation, replace them with wholly local
+interactions, or keep deliberate external links. Never silently reconnect or replay
+backend mutations.
+
+App acceptance must cover decoder rejection/relationship cases, the real browser
+download opened at `file://` with networking disabled, all exportable interactions,
+keyboard/focus, accessibility, theme restoration, and desktop/390px/320px layouts
+in light/dark modes. Observe automatic network attempts as well as CSP enforcement.
+Doctor remains structural; it does not validate payload semantics. UI adoption,
+source integration, activation, deployment and push remain separate boundaries.

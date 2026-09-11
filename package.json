@@ -1,0 +1,60 @@
+{
+  "name": "local-web-server",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.22.2 <23 || >=24.15.0 <25 || >=26.0.0"
+  },
+  "scripts": {
+    "test:ui": "vitest --config packages/ui/vite.config.ts",
+    "build:ui": "vite build --config packages/ui/vite.config.ts && tsc --project packages/ui/tsconfig.json --emitDeclarationOnly",
+    "check:ui": "tsc --project packages/ui/tsconfig.json --noEmit",
+    "check:ui:consumer": "node scripts/check_ui_consumer.mjs",
+    "lint:index": "eslint apps/system-index",
+    "test:index": "npm run build:ui && vitest --config apps/system-index/vite.config.ts --run",
+    "test:index:e2e": "playwright test --config apps/system-index/playwright.config.ts",
+    "build:index": "npm run build:ui && vite build --config apps/system-index/vite.config.ts",
+    "check:index": "npm run lint:index && npm run test:index && npm run build:index",
+    "build:gallery": "npm run build:ui && tsc --project examples/ui-gallery/tsconfig.json --noEmit && vite build --config examples/ui-gallery/vite.config.ts",
+    "test:gallery": "npm run build:ui && vitest --config examples/ui-gallery/vite.config.ts",
+    "test:gallery:e2e": "npm run build:ui && playwright test --config examples/ui-gallery/playwright.config.ts",
+    "test:interactive-export:e2e": "npm run build:ui && playwright test --config examples/interactive-export-fixture/playwright.config.ts",
+    "verify:new-app": "python3 scripts/verify_new_app_workflow.py",
+    "verify:new-service-app": "python3 scripts/verify_new_app_workflow.py --kind service",
+    "verify:foundation-adoption": "python3 scripts/verify_foundation_adoption_workflow.py",
+    "verify:repository-service-transition": "python3 scripts/verify_repository_service_transition.py",
+    "verify:service-command-migration": "python3 scripts/verify_service_command_migration.py",
+    "verify:public-base-path-migration": "python3 scripts/verify_public_base_path_migration.py",
+    "verify:fleet-update": "python3 scripts/verify_fleet_update_workflow.py",
+    "verify:host-profile": "python3 scripts/verify_host_profile_workflow.py",
+    "verify:public-release": "python3 scripts/verify_public_release.py",
+    "pack:ui": "python3 scripts/build_ui_package.py artifacts/local-web-ui.tgz",
+    "pack:ui:0.7.0": "python3 scripts/build_ui_package.py artifacts/local-web-ui-0.7.0.tgz"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.1",
+    "@tabler/icons-react": "3.46.0",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "26.1.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "eslint": "10.8.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "globals": "17.9.0",
+    "jsdom": "30.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.66.0",
+    "vite": "8.2.0",
+    "vitest": "4.1.11"
+  }
+}

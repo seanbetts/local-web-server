@@ -1,0 +1,17 @@
+# __APP_TITLE__ agent guide
+
+Use `$local-web-app-development` for creation, development, diagnostics, verification, and registration. Resolve `LOCAL_WEB` exactly as that skill prescribes before running platform commands.
+
+- App id: `__APP_ID__`
+- App kind: `__APP_KIND__`
+- Hosted route: `__APP_ROUTE__`
+- Capabilities: `__CAPABILITIES_JSON__`
+- Domain-owned code belongs under `src/`; shared shell and generic primitives come only from `@local-web/ui` public exports.
+- `src/contextExport.ts` owns the Context export payload. Keep it app-local, structured, private by default, and limited to deliberately shareable current context.
+- Interactive HTML export is optional in UI 0.7.0; existing context export stays script-free and unchanged. Follow `docs/architecture.md` before opting in. The app owns one shared versioned decoder, coherent `snapshotData` plus independent `viewState`, offline entry and backend-action adaptations; the framework owns packaging, identities, limits, CSP and offline shell behaviour.
+- Import `defineInteractiveExportContract`, `mountInteractiveExport` and shell APIs from `@local-web/ui`; import `localWebInteractiveExport` only from `@local-web/ui/vite`, with module paths: `{ appId: '__APP_ID__', contract: './src/contract.ts', entry: './src/offline.tsx' }`. Never substitute a metadata object for the contract module.
+- The shared decoder must validate both shapes and their relationships before download and offline rendering, including actual service responses. `{}` is allowed for compiled/static snapshot content or empty view state. Require an explicit non-empty `private` or `sensitive` notice, honour 5 MiB snapshot-data/20 MiB artifact limits, and never include credentials or silently reconnect offline.
+- Preserve fail-closed stale-page compatibility and the exact interactive-artifact CSP in `docs/architecture.md`. Prove real downloaded `file://` use without automatic network dependencies; adapt backend actions explicitly and test all exportable interactions, accessibility, responsive layouts and theme restoration.
+- Never commit secrets or private environment values. Keep local values in ignored `.env` files.
+- Before completion run `"$LOCAL_WEB" app doctor --repository .`, `npm run check`, `npm run test:e2e`, and `"$LOCAL_WEB" app check --repository .`.
+- `npm run check` must remain app-local. Platform orchestration belongs to `"$LOCAL_WEB" app check --repository .`.

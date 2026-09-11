@@ -1,0 +1,23 @@
+import { createServer } from 'node:http';
+
+const portFlag = process.argv.indexOf('--port');
+const port = Number(process.argv[portFlag + 1]);
+
+if (portFlag < 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+  throw new Error('A valid --port is required.');
+}
+
+const server = createServer((request, response) => {
+  if (request.url === '/healthz') {
+    response.writeHead(204).end();
+    return;
+  }
+  if (request.url === '/api/hello') {
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ message: 'Hello from the local service.' }));
+    return;
+  }
+  response.writeHead(404).end();
+});
+
+server.listen(port, '127.0.0.1');

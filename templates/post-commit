@@ -1,0 +1,10 @@
+#!/bin/sh
+# managed-by-local-web-server
+branch=$(/usr/bin/git symbolic-ref --quiet --short HEAD 2>/dev/null) || exit 0
+[ "$branch" = main ] || exit 0
+/opt/homebrew/bin/python3 /Users/example/Coding/local-web-server/bin/local-web deploy APP_ID --from-hook
+result=$?
+if [ "$result" -ne 0 ]; then
+    echo "Local web deployment failed for APP_ID; the Git operation remains successful." >&2
+fi
+exit 0

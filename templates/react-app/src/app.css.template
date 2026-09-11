@@ -1,0 +1,42 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--lwp-colour-canvas);
+}
+
+.app-content {
+  width: min(100% - (2 * var(--lwp-space-4)), 72rem);
+  margin-inline: auto;
+  padding-block: clamp(var(--lwp-space-6), 6vw, calc(var(--lwp-space-8) * 2));
+}
+
+.app-workspace h2,
+.app-workspace p {
+  margin: 0;
+}
+
+.app-workspace {
+  min-height: 18rem;
+  display: grid;
+  align-items: center;
+  padding: clamp(var(--lwp-space-4), 5vw, var(--lwp-space-8));
+}
+
+.app-workspace .lwp-button {
+  width: fit-content;
+}
+
+@media (max-width: 40rem) {
+  .app-content {
+    width: min(100% - (2 * var(--lwp-space-3)), 72rem);
+  }
+
+  .app-workspace {
+    min-height: 15rem;
+  }
+}

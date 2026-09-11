@@ -1,0 +1,9 @@
+node_modules/
+packages/*/dist/
+packages/*/.vite/
+examples/*/dist/
+examples/*/test-results/
+apps/*/dist/
+apps/*/test-results/
+*.tsbuildinfo
+artifacts/

@@ -1,0 +1,11 @@
+import { normalizePublicBasePath } from './platform';
+
+describe('normalizePublicBasePath', () => {
+  it('keeps independent development at the origin root', () => {
+    expect(normalizePublicBasePath('/')).toBe('/');
+  });
+
+  it('keeps the platform runner hosted below the app route', () => {
+    expect(normalizePublicBasePath('__APP_ROUTE__/')).toBe('__APP_ROUTE__/');
+  });
+});

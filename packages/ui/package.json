@@ -1,0 +1,28 @@
+{
+  "name": "@local-web/ui",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css",
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "vite": "^8.2.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "peerDependenciesMeta": {
+    "vite": { "optional": true }
+  }
+}

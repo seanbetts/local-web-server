@@ -1,0 +1,15 @@
+import type { AppIdentity } from '@local-web/ui';
+
+export const platformApp = {
+  id: '__APP_ID__',
+  name: '__APP_TITLE__',
+  icon: '__APP_ICON__',
+  accent: '__APP_ACCENT__',
+} satisfies AppIdentity;
+
+export function normalizePublicBasePath(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === '/') return '/';
+  const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
+}

@@ -1,0 +1,64 @@
+@layer lwp-fallback {
+  :root {
+    color-scheme: light dark;
+    --lwp-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --lwp-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --lwp-space-1: .25rem;
+    --lwp-space-2: .5rem;
+    --lwp-space-3: .75rem;
+    --lwp-space-4: 1rem;
+    --lwp-space-6: 1.5rem;
+    --lwp-space-8: 2rem;
+    --lwp-radius-control: .375rem;
+    --lwp-radius-surface: .5rem;
+    --lwp-border-width: 1px;
+    --lwp-focus-width: 3px;
+    --lwp-text-size-compact: .75rem;
+    --lwp-motion-duration-fast: 120ms;
+    --lwp-motion-easing-standard: ease;
+    --lwp-colour-canvas: light-dark(#F6F7F9, #11151C);
+    --lwp-colour-surface: light-dark(#FFFFFF, #19202B);
+    --lwp-colour-text: light-dark(#172033, #F5F7FA);
+    --lwp-colour-text-muted: light-dark(#536076, #B7C0CF);
+    --lwp-colour-line: light-dark(#7A8799, #8895A8);
+    --lwp-colour-accent: light-dark(#3859D6, #91A7FF);
+    --lwp-colour-accent-contrast: light-dark(#FFFFFF, #0D1220);
+    --lwp-colour-danger: light-dark(#B42318, #FF8A80);
+    --lwp-colour-warning: light-dark(#8A4B00, #F5B95F);
+    --lwp-colour-success: light-dark(#18794E, #63D6A0);
+    --lwp-colour-focus: light-dark(#2855D9, #9BB1FF);
+    --lwp-shadow: 0 12px 32px light-dark(rgba(23, 32, 51, .14), rgba(0, 0, 0, .45));
+  }
+
+  :root[data-lwp-colour-mode="light"] {
+    color-scheme: light;
+    --lwp-colour-canvas: #F6F7F9;
+    --lwp-colour-surface: #FFFFFF;
+    --lwp-colour-text: #172033;
+    --lwp-colour-text-muted: #536076;
+    --lwp-colour-line: #7A8799;
+    --lwp-colour-accent: #3859D6;
+    --lwp-colour-accent-contrast: #FFFFFF;
+    --lwp-colour-danger: #B42318;
+    --lwp-colour-warning: #8A4B00;
+    --lwp-colour-success: #18794E;
+    --lwp-colour-focus: #2855D9;
+    --lwp-shadow: 0 12px 32px rgba(23, 32, 51, .14);
+  }
+
+  :root[data-lwp-colour-mode="dark"] {
+    color-scheme: dark;
+    --lwp-colour-canvas: #11151C;
+    --lwp-colour-surface: #19202B;
+    --lwp-colour-text: #F5F7FA;
+    --lwp-colour-text-muted: #B7C0CF;
+    --lwp-colour-line: #8895A8;
+    --lwp-colour-accent: #91A7FF;
+    --lwp-colour-accent-contrast: #0D1220;
+    --lwp-colour-danger: #FF8A80;
+    --lwp-colour-warning: #F5B95F;
+    --lwp-colour-success: #63D6A0;
+    --lwp-colour-focus: #9BB1FF;
+    --lwp-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+  }
+}

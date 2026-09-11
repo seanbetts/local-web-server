@@ -1,0 +1,37 @@
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+
+test('renders an accessible adaptive shell and representative workflow', async ({ page }) => {
+  await page.goto('./');
+  await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'System Index' })).toHaveAttribute('href', '/');
+  await page.getByRole('button', { name: 'Preview loading' }).click();
+  await expect(page.getByRole('status', { name: 'Loading content' })).toBeVisible();
+
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+});
+
+test('downloads a closed, inert current-context document', async ({ page }) => {
+  await page.goto('./');
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export context' }).click();
+  const download = await downloadPromise;
+  const path = await download.path();
+  expect(path).not.toBeNull();
+  const html = await readFile(path!, 'utf-8');
+  const payload = html.match(/<script type="application\/json" data-context-export-json>(.*?)<\/script>/)?.[1];
+
+  expect(download.suggestedFilename()).toMatch(/^__APP_ID__--[a-z0-9-]+--\d{4}-\d{2}-\d{2}\.html$/);
+  expect(JSON.parse(payload ?? '')).toMatchObject({
+    app: { id: '__APP_ID__' },
+    data: { foundation: { appKind: '__APP_KIND__' } },
+  });
+  expect(html.match(/<script\b/g)).toHaveLength(1);
+  expect(html).toContain('<script type="application/json" data-context-export-json>');
+  expect(html).toContain("Content-Security-Policy\" content=\"default-src 'none'; connect-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; script-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+  expect(html).toContain('<strong data-context-export-classification>PRIVATE</strong>: Private Local Web context. Share deliberately.');
+  expect(html).toContain('<p data-context-export-snapshot>This is a static snapshot. Changes do not sync to the source app.</p>');
+});

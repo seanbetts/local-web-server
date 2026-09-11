@@ -1,0 +1,189 @@
+{
+  "name": "CI",
+  "on": {
+    "pull_request": {},
+    "workflow_dispatch": {}
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "jobs": {
+    "python": {
+      "name": "Python 3.14",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 60,
+      "env": {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "/usr/bin/false",
+        "SSH_ASKPASS": "/usr/bin/false"
+      },
+      "steps": [
+        {
+          "name": "Check out the public tree",
+          "uses": "actions/checkout@v7",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v7",
+          "with": {
+            "python-version": "3.14"
+          }
+        },
+        {
+          "name": "Set up Node",
+          "uses": "actions/setup-node@v7",
+          "with": {
+            "node-version": "24",
+            "cache": "npm",
+            "cache-dependency-path": "package-lock.json"
+          }
+        },
+        {
+          "name": "Install locked dependencies without lifecycle scripts",
+          "run": "npm ci --ignore-scripts"
+        },
+        {
+          "name": "Compile Python sources",
+          "run": "python3 -m compileall -q local_web_server scripts tests"
+        },
+        {
+          "name": "Run the complete Python suite",
+          "run": "PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v"
+        }
+      ]
+    },
+    "node": {
+      "name": "Node ${{ matrix.node }}",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 30,
+      "env": {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "/usr/bin/false",
+        "SSH_ASKPASS": "/usr/bin/false"
+      },
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "node": [
+            22,
+            24,
+            26
+          ]
+        }
+      },
+      "steps": [
+        {
+          "name": "Check out the public tree",
+          "uses": "actions/checkout@v7",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Set up Node",
+          "uses": "actions/setup-node@v7",
+          "with": {
+            "node-version": "${{ matrix.node }}",
+            "cache": "npm",
+            "cache-dependency-path": "package-lock.json"
+          }
+        },
+        {
+          "name": "Install locked dependencies without lifecycle scripts",
+          "run": "npm ci --ignore-scripts"
+        },
+        {
+          "name": "Type-check the shared UI",
+          "run": "npm run check:ui"
+        },
+        {
+          "name": "Check the shared UI consumer contract",
+          "run": "npm run check:ui:consumer"
+        },
+        {
+          "name": "Test the shared UI",
+          "run": "npm run test:ui -- --run"
+        },
+        {
+          "name": "Build the shared UI",
+          "run": "npm run build:ui"
+        },
+        {
+          "name": "Check and build System Index",
+          "run": "npm run check:index"
+        },
+        {
+          "name": "Build the UI gallery",
+          "run": "npm run build:gallery"
+        },
+        {
+          "name": "Test the UI gallery",
+          "run": "npm run test:gallery -- --run"
+        },
+        {
+          "name": "Verify the public release surface",
+          "run": "npm run verify:public-release"
+        },
+        {
+          "name": "Audit all production and development dependencies",
+          "run": "npm audit"
+        },
+        {
+          "name": "Audit production dependencies",
+          "run": "npm audit --omit=dev"
+        }
+      ]
+    },
+    "macos": {
+      "name": "Disposable macOS platform verification",
+      "runs-on": "macos-15",
+      "timeout-minutes": 30,
+      "env": {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "/usr/bin/false",
+        "SSH_ASKPASS": "/usr/bin/false"
+      },
+      "steps": [
+        {
+          "name": "Check out the public tree",
+          "uses": "actions/checkout@v7",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v7",
+          "with": {
+            "python-version": "3.14"
+          }
+        },
+        {
+          "name": "Install Caddy 2",
+          "run": "brew install caddy"
+        },
+        {
+          "name": "Report the selected Caddy version",
+          "run": "caddy version | grep -E '^v2[.]'"
+        },
+        {
+          "name": "Run macOS profile, installer, and renderer tests",
+          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning python3 -m unittest tests.test_host_profile_backup tests.test_host_profile_workflow tests.test_install tests.test_render -v"
+        },
+        {
+          "name": "Run the disposable host-profile workflow",
+          "run": "python3 scripts/verify_host_profile_workflow.py"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,63 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { buildContextExport } from './contextExport';
+
+describe('buildContextExport', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('builds the current generated foundation context from one observation time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-22T12:34:56.000Z'));
+
+    await expect(buildContextExport({ signal: new AbortController().signal })).resolves.toEqual({
+      schema: 'local-web-context/v1',
+      app: {
+        id: '__APP_ID__',
+        name: '__APP_TITLE__',
+        version: '0.0.0',
+        sourceRevision: 'unknown',
+      },
+      context: {
+        title: '__APP_TITLE__ current context',
+        scope: 'Generated application foundation',
+        activeRoute: '__APP_ROUTE__',
+        generatedAt: '2026-08-22T12:34:56.000Z',
+        observedAt: '2026-08-22T12:34:56.000Z',
+        dataRevision: null,
+      },
+      sensitivity: {
+        classification: 'private',
+        notice: 'Private Local Web context. Share deliberately.',
+      },
+      summary: 'A functional Local Web foundation ready for domain development.',
+      capabilities: ['Shared shell, theme, verification, and context export'],
+      sections: [{
+        id: 'current-state',
+        title: 'Current state',
+        blocks: [{
+          type: 'paragraph',
+          text: 'The generated foundation is connected and ready for app-owned features.',
+        }],
+      }],
+      data: { foundation: { status: 'ready', appKind: '__APP_KIND__' } },
+      provenance: {
+        freshness: 'Captured when the export action was selected.',
+        sources: [{
+          label: 'Generated application state',
+          observedAt: '2026-08-22T12:34:56.000Z',
+          revision: null,
+        }],
+      },
+      assumptions: [],
+      decisions: [],
+      caveats: ['Domain context has not been added yet.'],
+      omissions: ['No whole-app source, runtime, or media is included.'],
+    });
+  });
+
+  it('stops immediately when the export action has been cancelled', async () => {
+    await expect(buildContextExport({ signal: AbortSignal.abort() })).rejects.toThrow();
+  });
+});

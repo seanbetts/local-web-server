@@ -1,0 +1,183 @@
+:root,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--lwp-colour-canvas);
+}
+
+:where([data-lwp-app-id="villa-shirt-collection"]) {
+  --lwp-app-accent-light: #7A1735;
+  --lwp-app-accent-dark: #9C5369;
+}
+
+:where([data-lwp-app-id="ui-gallery"]) {
+  --lwp-app-accent-light: #52677F;
+  --lwp-app-accent-dark: #576C83;
+}
+
+:where([data-lwp-app-id="plotter"]) {
+  --lwp-app-accent-light: #25799C;
+  --lwp-app-accent-dark: #25799C;
+}
+
+.gallery-index-page {
+  max-width: 48rem;
+}
+
+.gallery-index-page h1,
+.gallery-index-page p {
+  margin-block: var(--lwp-space-2);
+}
+
+.gallery-page {
+  width: min(72rem, 100%);
+  margin-inline: auto;
+  padding: var(--lwp-space-8);
+}
+
+.gallery-page > .lwp-view-header {
+  margin-block-end: var(--lwp-space-8);
+}
+
+.gallery-sections h2 {
+  margin-block: var(--lwp-space-2);
+}
+
+.gallery-surface span,
+.gallery-icon span {
+  color: var(--lwp-colour-text-muted);
+}
+
+.gallery-sections {
+  gap: var(--lwp-space-8);
+}
+
+.gallery-sections section > h2 {
+  margin-block-end: var(--lwp-space-4);
+}
+
+.gallery-sections section > * + * {
+  margin-block-start: var(--lwp-space-4);
+}
+
+.gallery-sections .lwp-surface {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lwp-space-2);
+}
+
+.gallery-sections .lwp-data-viewport th,
+.gallery-sections .lwp-data-viewport td {
+  padding: var(--lwp-space-3) var(--lwp-space-4);
+  border-block-end: var(--lwp-border-width) solid var(--lwp-colour-line);
+  text-align: start;
+  white-space: nowrap;
+}
+
+.gallery-sections .lwp-data-viewport thead th {
+  background: color-mix(in srgb, var(--lwp-colour-canvas) 72%, var(--lwp-colour-surface));
+  color: var(--lwp-colour-text-muted);
+  font-size: var(--lwp-text-size-compact);
+}
+
+.gallery-sections .lwp-data-viewport tbody tr:last-child > * {
+  border-block-end: 0;
+}
+
+.gallery-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  gap: var(--lwp-space-2);
+}
+
+.gallery-icon {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--lwp-space-2);
+  padding: var(--lwp-space-2);
+  border: var(--lwp-border-width) solid var(--lwp-colour-line);
+  border-radius: var(--lwp-radius-control);
+  background: var(--lwp-colour-surface);
+}
+
+.gallery-icon svg,
+.gallery-accent svg {
+  flex: none;
+  width: var(--lwp-space-6);
+  height: var(--lwp-space-6);
+  color: var(--lwp-app-accent);
+}
+
+.gallery-icon span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--lwp-text-size-compact);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-accent,
+.gallery-token-card {
+  flex-direction: row !important;
+  align-items: center;
+}
+
+.gallery-token-card__swatch {
+  display: block;
+  flex: none;
+  width: var(--lwp-space-8);
+  height: var(--lwp-space-8);
+  border: var(--lwp-border-width) solid var(--lwp-colour-line);
+  border-radius: var(--lwp-radius-control);
+  background: var(--lwp-colour-accent);
+}
+
+.gallery-immersive-canvas {
+  position: relative;
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  place-items: center;
+  overflow: hidden;
+  background-color: color-mix(in srgb, var(--lwp-colour-canvas) 88%, var(--lwp-app-accent));
+  background-image:
+    linear-gradient(28deg, transparent 47%, color-mix(in srgb, var(--lwp-app-accent) 64%, transparent) 48% 52%, transparent 53%),
+    linear-gradient(112deg, transparent 47%, color-mix(in srgb, var(--lwp-colour-line) 82%, transparent) 48% 52%, transparent 53%),
+    repeating-linear-gradient(0deg, transparent 0 4rem, color-mix(in srgb, var(--lwp-colour-line) 66%, transparent) 4rem 4.0625rem),
+    repeating-linear-gradient(90deg, transparent 0 4rem, color-mix(in srgb, var(--lwp-colour-line) 66%, transparent) 4rem 4.0625rem);
+}
+
+.gallery-immersive-canvas span {
+  z-index: 1;
+  padding: var(--lwp-space-3) var(--lwp-space-4);
+  border: var(--lwp-border-width) solid var(--lwp-colour-line);
+  border-radius: var(--lwp-radius-control);
+  background: color-mix(in srgb, var(--lwp-colour-surface) 92%, transparent);
+  box-shadow: var(--lwp-shadow);
+  color: var(--lwp-colour-text);
+  font-family: var(--lwp-font-mono);
+}
+
+.gallery-immersive-canvas__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 36rem) {
+  .gallery-page {
+    padding: var(--lwp-space-4);
+  }
+
+  .gallery-icons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

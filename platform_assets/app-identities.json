@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "reservedIcons": [
+    "apps"
+  ],
+  "icons": [
+    {"name": "apps", "source": "apps", "label": "Applications", "keywords": ["application", "generic", "platform"]},
+    {"name": "book", "source": "book", "label": "Book", "keywords": ["book", "journal", "library", "notes", "reading", "recipe"]},
+    {"name": "briefcase", "source": "briefcase", "label": "Briefcase", "keywords": ["career", "job", "portfolio", "work"]},
+    {"name": "calendar", "source": "calendar", "label": "Calendar", "keywords": ["calendar", "date", "planner", "schedule"]},
+    {"name": "chart-line", "source": "chart-line", "label": "Line chart", "keywords": ["analytics", "chart", "samplealpha", "forecast", "planning"]},
+    {"name": "checklist", "source": "checklist", "label": "Checklist", "keywords": ["checklist", "tasks", "todo", "tracking"]},
+    {"name": "database", "source": "database", "label": "Database", "keywords": ["archive", "collection", "data", "database", "records"]},
+    {"name": "home", "source": "home", "label": "Home", "keywords": ["home", "house", "property"]},
+    {"name": "map", "source": "map", "label": "Map", "keywords": ["geography", "location", "map", "travel"]},
+    {"name": "music", "source": "music", "label": "Music", "keywords": ["album", "audio", "music", "playlist"]},
+    {"name": "photo", "source": "photo", "label": "Photo", "keywords": ["gallery", "image", "media", "photo"]},
+    {"name": "plane", "source": "plane", "label": "Plane", "keywords": ["flight", "holiday", "plane", "travel"]},
+    {"name": "route", "source": "route", "label": "Route", "keywords": ["drive", "itinerary", "journey", "route", "travel", "trip"]},
+    {"name": "shirt-sport", "source": "shirt-sport", "label": "Sports shirt", "keywords": ["collection", "football", "shirt", "sport"]},
+    {"name": "shopping-cart", "source": "shopping-cart", "label": "Shopping cart", "keywords": ["basket", "buy", "shopping", "store"]},
+    {"name": "stretching", "source": "stretching", "label": "Exercise", "keywords": ["exercise", "fitness", "movement", "routine", "training"]},
+    {"name": "target", "source": "target", "label": "Target", "keywords": ["goal", "objective", "progress", "target"]},
+    {"name": "ticket", "source": "ticket", "label": "Ticket", "keywords": ["event", "seat", "season", "ticket"]},
+    {"name": "tools-kitchen-2", "source": "tools-kitchen-2", "label": "Kitchen tools", "keywords": ["cooking", "food", "meal", "menu", "planning", "recipe"]},
+    {"name": "wallet", "source": "wallet", "label": "Wallet", "keywords": ["budget", "samplealpha", "money", "spending", "wallet"]},
+    {"name": "weather-sun", "source": "sun-high", "label": "Weather", "keywords": ["climate", "forecast", "sun", "weather"]}
+  ],
+  "accents": [
+    {"name": "claret", "seed": "#7A1735"},
+    {"name": "pink", "seed": "#D9467A"},
+    {"name": "blue", "seed": "#75A7FF"},
+    {"name": "green", "seed": "#76D39B"},
+    {"name": "slate", "seed": "#8EA7C6"},
+    {"name": "teal", "seed": "#3AAE9B"},
+    {"name": "amber", "seed": "#D99A2B"},
+    {"name": "orange", "seed": "#D97745"},
+    {"name": "red", "seed": "#D65B65"},
+    {"name": "violet", "seed": "#8B75D7"}
+  ]
+}

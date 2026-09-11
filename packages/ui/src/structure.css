@@ -1,0 +1,475 @@
+@import './primitives.css';
+
+@layer lwp-structure {
+  :where(.lwp-root, .lwp-root *, .lwp-root *::before, .lwp-root *::after) {
+    box-sizing: border-box;
+  }
+
+  :where(.lwp-root button, .lwp-root input, .lwp-root select, .lwp-root textarea) {
+    font: inherit;
+  }
+
+  .lwp-root {
+    min-height: 100%;
+    color: var(--lwp-colour-text);
+    font-family: var(--lwp-font-sans);
+  }
+
+  .lwp-root :focus-visible {
+    outline: var(--lwp-focus-width) solid var(--lwp-colour-focus);
+    outline-offset: 2px;
+  }
+
+  .lwp-surface {
+    border: var(--lwp-border-width) solid var(--lwp-colour-line);
+    border-radius: var(--lwp-radius-surface);
+    background: var(--lwp-colour-surface);
+    box-shadow: var(--lwp-shadow);
+  }
+
+  .lwp-control {
+    min-height: 2.5rem;
+    border: var(--lwp-border-width) solid var(--lwp-colour-line);
+    border-radius: var(--lwp-radius-control);
+    background: var(--lwp-colour-surface);
+    color: var(--lwp-colour-text);
+    font: inherit;
+  }
+
+  .lwp-platform-shell {
+    --lwp-app-accent-light: #8097B3;
+    --lwp-app-accent-dark: #8EA7C6;
+    --lwp-app-accent: light-dark(var(--lwp-app-accent-light), var(--lwp-app-accent-dark));
+    --lwp-shell-height: clamp(4.5rem, 6vw, 5rem);
+  }
+
+  .lwp-platform-shell--contained {
+    width: calc(100% - clamp(var(--lwp-space-4), 2vw, var(--lwp-space-8)));
+    max-width: 90rem;
+    min-height: calc(100vh - clamp(var(--lwp-space-4), 2vw, var(--lwp-space-8)));
+    margin: var(--lwp-space-2) auto;
+    overflow: clip;
+    border: var(--lwp-border-width) solid var(--lwp-colour-line);
+    border-radius: var(--lwp-radius-surface);
+    background: var(--lwp-colour-canvas);
+  }
+
+  .lwp-platform-shell--edge-to-edge {
+    display: grid;
+    width: 100%;
+    max-width: none;
+    min-height: 100dvh;
+    margin: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: var(--lwp-colour-canvas);
+  }
+
+  .lwp-platform-shell--edge-to-edge .lwp-platform-shell__main {
+    min-height: 0;
+  }
+
+  :root[data-lwp-colour-mode="light"] .lwp-platform-shell {
+    --lwp-app-accent: var(--lwp-app-accent-light);
+  }
+
+  :root[data-lwp-colour-mode="dark"] .lwp-platform-shell {
+    --lwp-app-accent: var(--lwp-app-accent-dark);
+  }
+
+  .lwp-skip-link {
+    position: fixed;
+    z-index: 1000;
+    inset-block-start: var(--lwp-space-2);
+    inset-inline-start: var(--lwp-space-2);
+    padding: var(--lwp-space-2) var(--lwp-space-3);
+    border-radius: var(--lwp-radius-control);
+    background: var(--lwp-colour-surface);
+    color: var(--lwp-colour-text);
+    transform: translateY(calc(-100% - var(--lwp-space-4)));
+    transition: transform var(--lwp-motion-duration-fast) var(--lwp-motion-easing-standard);
+  }
+
+  .lwp-skip-link:focus {
+    transform: translateY(0);
+  }
+
+  .lwp-platform-shell__header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--lwp-space-4);
+    min-height: var(--lwp-shell-height);
+    margin-inline: clamp(var(--lwp-space-4), 3vw, 2.5rem);
+    border-block-end: var(--lwp-border-width) solid var(--lwp-colour-line);
+    font-family: var(--lwp-font-mono);
+  }
+
+  .lwp-platform-shell__crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lwp-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .lwp-platform-shell__crumbs a {
+    color: var(--lwp-colour-text);
+  }
+
+  .lwp-platform-shell__crumbs [aria-current="page"] {
+    color: var(--lwp-colour-text-muted);
+  }
+
+  .lwp-platform-shell__header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: end;
+    gap: var(--lwp-space-2);
+  }
+
+  .lwp-offline-notice {
+    display: flex;
+    grid-column: 1 / -1;
+    flex-direction: column;
+    gap: var(--lwp-space-1);
+    padding-block: var(--lwp-space-3);
+    color: var(--lwp-colour-text-muted);
+    font-family: var(--lwp-font-sans);
+    font-size: 0.875rem;
+    overflow-wrap: anywhere;
+  }
+
+  .lwp-offline-notice strong {
+    color: var(--lwp-colour-text);
+  }
+
+  .lwp-app-shell > .lwp-offline-notice {
+    margin-inline: var(--lwp-space-4);
+  }
+
+  .lwp-context-export {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .lwp-context-export .lwp-icon-button {
+    width: calc(
+      2.75rem + var(--lwp-space-2) + var(--lwp-border-width) + var(--lwp-border-width)
+    );
+    height: calc(
+      2.75rem + var(--lwp-space-2) + var(--lwp-border-width) + var(--lwp-border-width)
+    );
+    min-height: 0;
+    flex: none;
+  }
+
+  .lwp-context-export__status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .lwp-interactive-export {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lwp-space-2);
+  }
+
+  .lwp-interactive-export .lwp-icon-button {
+    width: calc(
+      2.75rem + var(--lwp-space-2) + var(--lwp-border-width) + var(--lwp-border-width)
+    );
+    height: calc(
+      2.75rem + var(--lwp-space-2) + var(--lwp-border-width) + var(--lwp-border-width)
+    );
+    min-height: 0;
+    flex: none;
+  }
+
+  .lwp-interactive-export__sensitivity {
+    display: flex;
+    max-width: 18rem;
+    flex-direction: column;
+    gap: var(--lwp-space-1);
+    margin: 0;
+    color: var(--lwp-colour-text-muted);
+    font-family: var(--lwp-font-sans);
+    font-size: 0.75rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .lwp-interactive-export__sensitivity strong {
+    color: var(--lwp-colour-text);
+    font-family: var(--lwp-font-mono);
+    text-transform: uppercase;
+  }
+
+  .lwp-interactive-export-chooser__choices {
+    display: grid;
+    gap: var(--lwp-space-4);
+  }
+
+  .lwp-interactive-export-chooser__choice {
+    display: grid;
+    gap: var(--lwp-space-2);
+    padding: var(--lwp-space-4);
+    border: var(--lwp-border-width) solid var(--lwp-colour-line);
+    border-radius: var(--lwp-radius-control);
+  }
+
+  .lwp-interactive-export-chooser__choice > p {
+    margin: 0;
+    color: var(--lwp-colour-text-muted);
+  }
+
+  .lwp-interactive-export-chooser__choice .lwp-interactive-export__sensitivity {
+    max-width: none;
+    padding-block-start: var(--lwp-space-2);
+    border-block-start: var(--lwp-border-width) solid var(--lwp-colour-line);
+    font-size: 0.875rem;
+  }
+
+  .lwp-platform-shell__main--contained {
+    padding: clamp(var(--lwp-space-6), 4vw, 3.5rem)
+      clamp(var(--lwp-space-4), 3vw, 2.5rem);
+  }
+
+  .lwp-platform-shell__main--edge-to-edge { padding: 0; }
+
+  .lwp-app-shell {
+    --lwp-app-accent-light: #8097B3;
+    --lwp-app-accent-dark: #8EA7C6;
+    --lwp-app-accent: light-dark(
+      var(--lwp-app-accent-light),
+      var(--lwp-app-accent-dark)
+    );
+    min-height: 100vh;
+    background: var(--lwp-colour-canvas);
+  }
+
+  :root[data-lwp-colour-mode="light"] .lwp-app-shell {
+    --lwp-app-accent: var(--lwp-app-accent-light);
+  }
+
+  :root[data-lwp-colour-mode="dark"] .lwp-app-shell {
+    --lwp-app-accent: var(--lwp-app-accent-dark);
+  }
+
+  .lwp-app-shell__header {
+    display: grid;
+    grid-template-areas: "all-apps identity navigation end";
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    align-items: center;
+    min-width: 0;
+    min-height: 3.5rem;
+    gap: var(--lwp-space-3);
+    padding-inline: var(--lwp-space-3);
+    border-block-end: var(--lwp-border-width) solid var(--lwp-colour-line);
+    background: var(--lwp-colour-surface);
+    color: var(--lwp-colour-text);
+  }
+
+  .lwp-app-shell__all-apps,
+  .lwp-app-shell__identity,
+  .lwp-app-shell__end,
+  .lwp-app-shell__actions {
+    display: flex;
+    align-items: center;
+  }
+
+  .lwp-app-shell__all-apps {
+    grid-area: all-apps;
+    min-height: 2rem;
+    padding-inline: var(--lwp-space-2);
+    border: var(--lwp-border-width) solid var(--lwp-colour-line);
+    border-radius: var(--lwp-radius-control);
+    color: var(--lwp-colour-text);
+    text-decoration: none;
+  }
+
+  .lwp-app-shell__all-apps svg,
+  .lwp-app-shell__identity-icon {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
+  .lwp-app-shell__identity {
+    grid-area: identity;
+    min-width: 0;
+    gap: var(--lwp-space-2);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .lwp-app-shell__identity-icon {
+    box-sizing: content-box;
+    padding: var(--lwp-space-1);
+    border-radius: var(--lwp-radius-control);
+    background: color-mix(in srgb, var(--lwp-app-accent) 16%, transparent);
+  }
+
+  .lwp-app-shell__navigation {
+    grid-area: navigation;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .lwp-app-shell__end {
+    grid-area: end;
+    min-width: 0;
+    gap: var(--lwp-space-2);
+  }
+
+  .lwp-app-shell__actions {
+    gap: var(--lwp-space-1);
+    width: max-content;
+  }
+
+  .lwp-app-shell__actions-viewport {
+    min-width: 0;
+  }
+
+  .lwp-segmented-control {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--lwp-space-1);
+    padding: var(--lwp-space-1);
+    border: var(--lwp-border-width) solid var(--lwp-colour-line);
+    border-radius: var(--lwp-radius-control);
+    background: color-mix(in srgb, var(--lwp-colour-surface) 88%, var(--lwp-colour-canvas));
+  }
+
+  .lwp-segmented-control__choice {
+    position: relative;
+    isolation: isolate;
+    display: inline-grid;
+    width: 2.75rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--lwp-radius-control);
+    background: transparent;
+    color: var(--lwp-colour-text-muted);
+    cursor: pointer;
+  }
+
+  .lwp-segmented-control__choice svg {
+    position: relative;
+    z-index: 1;
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .lwp-segmented-control__indicator {
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--lwp-colour-accent) 16%, transparent);
+    opacity: 0;
+    transform: scale(0.82);
+    transition:
+      opacity 160ms ease,
+      transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .lwp-segmented-control__choice[data-selected] .lwp-segmented-control__indicator {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .lwp-segmented-control__choice[data-selected] {
+    color: var(--lwp-colour-text);
+  }
+
+  .lwp-segmented-control__choice:hover .lwp-segmented-control__indicator {
+    background: color-mix(in srgb, var(--lwp-colour-accent) 24%, transparent);
+  }
+
+  @media (max-width: 48rem) {
+    .lwp-platform-shell--contained {
+      width: calc(100% - var(--lwp-space-4));
+    }
+
+    .lwp-platform-shell__header {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto auto;
+      gap: var(--lwp-space-2);
+      padding-block: var(--lwp-space-3);
+    }
+
+    .lwp-platform-shell__crumbs {
+      flex-wrap: wrap;
+    }
+
+    .lwp-platform-shell__header-actions {
+      justify-self: end;
+    }
+
+    .lwp-app-shell__header {
+      gap: var(--lwp-space-2);
+      padding-inline: var(--lwp-space-2);
+    }
+  }
+
+  @media (max-width: 36rem) {
+    .lwp-app-shell__header {
+      grid-template-areas: "all-apps identity end";
+      grid-template-columns: auto auto minmax(0, 1fr);
+      gap: var(--lwp-space-1);
+    }
+
+    .lwp-app-shell__all-apps span,
+    .lwp-app-shell__identity span {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    .lwp-app-shell__navigation {
+      display: none;
+    }
+
+    .lwp-app-shell__end {
+      justify-content: end;
+      gap: var(--lwp-space-1);
+    }
+
+    .lwp-app-shell__actions-viewport {
+      flex: 1 1 auto;
+      padding: calc(var(--lwp-focus-width) + 3px);
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-inline: contain;
+      scrollbar-width: thin;
+    }
+
+    .lwp-app-shell__actions > * {
+      flex: none;
+      scroll-margin-inline: calc(var(--lwp-focus-width) + 3px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lwp-skip-link {
+      transition: none;
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "apps": [
+    {
+      "id": "example-archive",
+      "title": "Example Archive",
+      "route": "/example-archive/",
+      "icon": "database",
+      "accent": "#75A7FF",
+      "frontendHealthPath": "/example-archive/",
+      "backendHealthPath": null
+    },
+    {
+      "id": "example-notes",
+      "title": "Example Notes",
+      "route": "/example-notes/",
+      "icon": "book",
+      "accent": "#76D39B",
+      "frontendHealthPath": "/example-notes/",
+      "backendHealthPath": "/_local-web/health/example-notes/backend"
+    },
+    {
+      "id": "example-tasks",
+      "title": "Example Tasks",
+      "route": "/example-tasks/",
+      "icon": "checklist",
+      "accent": "#7A1735",
+      "frontendHealthPath": "/example-tasks/",
+      "backendHealthPath": "/example-tasks/healthz"
+    }
+  ]
+}

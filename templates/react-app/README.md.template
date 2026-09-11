@@ -1,0 +1,40 @@
+# __APP_TITLE__
+
+A generated local-web platform app hosted at `__APP_ROUTE__`.
+
+## Development
+
+```sh
+npm install
+npm run dev
+```
+
+The app runs independently with the shared UI package's fallback theme. Set `VITE_PUBLIC_BASE_PATH=__APP_ROUTE__/` to exercise its hosted path prefix.
+
+The shared header includes Context export. The generated adapter in `src/contextExport.ts` exports only this app's private foundation state; enrich it with reviewed domain context as features are added.
+
+Interactive HTML export is optional and separate from Context export. When the
+app needs it, add one shared app-owned contract/decoder, a coherent
+`buildSnapshot()` returning distinct `snapshotData` and `viewState`, an offline
+entry that imports the same contract, and `localWebInteractiveExport()` in the
+Vite configuration. Static compiled content may use empty snapshot data, and an
+app without restorable presentation state may use empty view state. Service apps
+must validate the captured backend response and explicitly adapt backend-only
+actions for offline use. Follow the framework README's compatibility, CSP,
+sensitivity, size, and browser-verification contract; do not copy a private
+app's payload shape into this template.
+
+__SERVICE_DEVELOPMENT__
+
+## Verification
+
+Resolve `LOCAL_WEB` exactly as `AGENTS.md` and the installed
+`$local-web-app-development` skill prescribe, then run:
+
+```sh
+"$LOCAL_WEB" app doctor --repository .
+npm run check
+npm run test:e2e
+```
+
+`npm run check` is entirely app-local: it runs lint, unit tests, and the production build. `"$LOCAL_WEB" app check --repository .` runs the structural doctor first, then orchestrates the app-local checks and browser tests.

@@ -1,0 +1,52 @@
+import js from '@eslint/js';
+import globals from 'globals';
+import reactHooks from 'eslint-plugin-react-hooks';
+import reactRefresh from 'eslint-plugin-react-refresh';
+import tseslint from 'typescript-eslint';
+
+export default tseslint.config(
+  { ignores: ['coverage', 'dist', 'release'] },
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    extends: [js.configs.recommended],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      js.configs.recommended,
+      ...tseslint.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        describe: 'readonly',
+        expect: 'readonly',
+        it: 'readonly',
+      },
+    },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@tabler/icons-react',
+              message: 'Import platform icons from @local-web/ui.',
+            },
+          ],
+          patterns: [
+            {
+              group: ['@tabler/icons-react/*'],
+              message: 'Import platform icons from @local-web/ui.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+);

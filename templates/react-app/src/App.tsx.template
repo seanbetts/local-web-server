@@ -1,0 +1,51 @@
+import { useState } from 'react';
+
+import {
+  AppShell,
+  Button,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  Stack,
+  Surface,
+  ViewHeader,
+} from '@local-web/ui';
+
+import './app.css';
+import { buildContextExport } from './contextExport';
+import { platformApp } from './platform';
+
+type DemoState = 'ready' | 'loading' | 'empty' | 'error';
+
+export function App() {
+  const [state, setState] = useState<DemoState>('ready');
+
+  return (
+    <AppShell app={platformApp} buildContextExport={buildContextExport}>
+      <Stack className="app-content">
+        <ViewHeader
+          title="Overview"
+          description="Start building this view's domain experience here."
+        />
+        <Surface className="app-workspace">
+          {state === 'ready' ? (
+            <Stack>
+              <h2>Ready to build</h2>
+              <p>The shared shell, theme, responsive layout, and test harness are connected.</p>
+              <Button variant="primary" onClick={() => setState('loading')}>Preview loading</Button>
+            </Stack>
+          ) : null}
+          {state === 'loading' ? (
+            <LoadingState title="Loading content" message="The app is preparing its data." action={<Button onClick={() => setState('empty')}>Continue</Button>} />
+          ) : null}
+          {state === 'empty' ? (
+            <EmptyState title="Nothing here yet" message="Add the first domain item when the feature is ready." action={<Button onClick={() => setState('error')}>Preview error</Button>} />
+          ) : null}
+          {state === 'error' ? (
+            <ErrorState title="Content unavailable" message="Try the safe recovery action." action={<Button onClick={() => setState('ready')}>Try again</Button>} />
+          ) : null}
+        </Surface>
+      </Stack>
+    </AppShell>
+  );
+}

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "publicOrigin": "https://local.example.ts.net",
+  "ingressMode": "tailscale-serve",
+  "runtimeRoot": "/Users/example/Coding/runtime",
+  "apps": [
+    {
+      "id": "example-notes",
+      "repository": "/Users/example/Coding/example-notes",
+      "autoDeploy": false,
+      "environmentFile": "/Users/example/Coding/example-notes/.env",
+      "environment": {
+        "VITE_PUBLIC_BASE_PATH": "/example-notes/"
+      }
+    },
+    {
+      "id": "example-service",
+      "repository": "/Users/example/Coding/example-service",
+      "autoDeploy": true,
+      "port": 43123,
+      "startCommand": [
+        "/opt/homebrew/bin/python3",
+        "-m",
+        "example_service",
+        "--port",
+        "43123"
+      ]
+    }
+  ]
+}

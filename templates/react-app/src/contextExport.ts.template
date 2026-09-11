@@ -1,0 +1,52 @@
+import type { ContextExportBuilder, LocalWebContextV1 } from '@local-web/ui';
+
+import { platformApp } from './platform';
+
+export const buildContextExport: ContextExportBuilder = async ({ signal }) => {
+  signal.throwIfAborted();
+  const generatedAt = new Date().toISOString();
+  return {
+    schema: 'local-web-context/v1',
+    app: {
+      id: platformApp.id,
+      name: platformApp.name,
+      version: '0.0.0',
+      sourceRevision: 'unknown',
+    },
+    context: {
+      title: `${platformApp.name} current context`,
+      scope: 'Generated application foundation',
+      activeRoute: '__APP_ROUTE__',
+      generatedAt,
+      observedAt: generatedAt,
+      dataRevision: null,
+    },
+    sensitivity: {
+      classification: 'private',
+      notice: 'Private Local Web context. Share deliberately.',
+    },
+    summary: 'A functional Local Web foundation ready for domain development.',
+    capabilities: ['Shared shell, theme, verification, and context export'],
+    sections: [{
+      id: 'current-state',
+      title: 'Current state',
+      blocks: [{
+        type: 'paragraph',
+        text: 'The generated foundation is connected and ready for app-owned features.',
+      }],
+    }],
+    data: { foundation: { status: 'ready', appKind: '__APP_KIND__' } },
+    provenance: {
+      freshness: 'Captured when the export action was selected.',
+      sources: [{
+        label: 'Generated application state',
+        observedAt: generatedAt,
+        revision: null,
+      }],
+    },
+    assumptions: [],
+    decisions: [],
+    caveats: ['Domain context has not been added yet.'],
+    omissions: ['No whole-app source, runtime, or media is included.'],
+  } satisfies LocalWebContextV1;
+};

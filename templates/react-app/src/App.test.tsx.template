@@ -1,0 +1,19 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+
+import { App } from './App';
+
+describe('App', () => {
+  it('renders the shared shell and moves through representative states', () => {
+    render(<App />);
+
+    expect(screen.getByRole('link', { name: 'System Index' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('button', { name: 'Export context' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview loading' }));
+    expect(screen.getByRole('status', { name: 'Loading content' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByRole('status', { name: 'Nothing here yet' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview error' }));
+    expect(screen.getByRole('alert', { name: 'Content unavailable' })).toBeInTheDocument();
+  });
+});

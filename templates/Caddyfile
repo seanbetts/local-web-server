@@ -1,0 +1,8 @@
+:80 {
+    {{routes}}
+    handle {
+        root * {{runtime_root_json}}
+        rewrite * /home.html
+        file_server
+    }
+}

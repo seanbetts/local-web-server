@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Web App Development"
+  short_description: "Build and verify local web applications"
+  default_prompt: "Use $local-web-app-development to create or maintain a local web application."

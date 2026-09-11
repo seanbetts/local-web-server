@@ -1,0 +1,22 @@
+[
+  {"seed":"#000000","surface":"#19202B","expected":"#6A6A6A"},
+  {"seed":"#000000","surface":"#FFFFFF","expected":"#000000"},
+  {"seed":"#000001","surface":"#19202B","expected":"#6A6A6B"},
+  {"seed":"#000001","surface":"#FFFFFF","expected":"#000001"},
+  {"seed":"#75A7FF","surface":"#19202B","expected":"#75A7FF"},
+  {"seed":"#75A7FF","surface":"#FFFFFF","expected":"#6895E3"},
+  {"seed":"#76D39B","surface":"#19202B","expected":"#76D39B"},
+  {"seed":"#76D39B","surface":"#FFFFFF","expected":"#5BA378"},
+  {"seed":"#777777","surface":"#19202B","expected":"#777777"},
+  {"seed":"#777777","surface":"#FFFFFF","expected":"#777777"},
+  {"seed":"#8EA7C6","surface":"#19202B","expected":"#8EA7C6"},
+  {"seed":"#8EA7C6","surface":"#FFFFFF","expected":"#8097B3"},
+  {"seed":"#D9467A","surface":"#19202B","expected":"#D9467A"},
+  {"seed":"#D9467A","surface":"#FFFFFF","expected":"#D9467A"},
+  {"seed":"#D98AA8","surface":"#19202B","expected":"#D98AA8"},
+  {"seed":"#D98AA8","surface":"#FFFFFF","expected":"#C87F9B"},
+  {"seed":"#FEFFFF","surface":"#19202B","expected":"#FEFFFF"},
+  {"seed":"#FEFFFF","surface":"#FFFFFF","expected":"#949595"},
+  {"seed":"#FFFFFF","surface":"#19202B","expected":"#FFFFFF"},
+  {"seed":"#FFFFFF","surface":"#FFFFFF","expected":"#949494"}
+]

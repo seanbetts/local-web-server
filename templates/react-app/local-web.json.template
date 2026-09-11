@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "__APP_ID__",
+  "title": "__APP_TITLE__",
+  "route": "__APP_ROUTE__",
+  "kind": "__APP_KIND__",
+  "build": {
+    "commands": [
+      ["npm", "ci"],
+      ["npm", "run", "build"]
+    ],
+    "output": "__BUILD_OUTPUT__",
+    "environment": [
+      "VITE_PUBLIC_BASE_PATH"
+    ]__BUILD_RELEASE__
+  },
+  "healthPath": "__HEALTH_PATH__"__SERVICE_MANIFEST__,
+  "home": {
+    "icon": "__APP_ICON__",
+    "accent": "__APP_ACCENT__"
+  },
+  "platform": {
+    "contractVersion": 1,
+    "templateVersion": 3,
+    "uiVersion": "__UI_VERSION__",
+    "capabilities": __CAPABILITIES_JSON__
+  }
+}

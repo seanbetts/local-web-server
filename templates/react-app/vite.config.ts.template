@@ -1,0 +1,26 @@
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vitest/config';
+
+import { localWebApp } from '@local-web/ui/vite';
+import { normalizePublicBasePath } from './src/platform.ts';
+
+const publicBasePath = normalizePublicBasePath(
+  process.env.VITE_PUBLIC_BASE_PATH ?? '/',
+);
+
+export default defineConfig({
+  base: publicBasePath,
+  plugins: [
+    react(),
+    localWebApp({
+      appId: '__APP_ID__',
+      basePath: publicBasePath,
+    }),
+  ],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['./src/**/*.test.ts', './src/**/*.test.tsx'],
+    setupFiles: ['./src/test/setup.ts'],
+  },
+});

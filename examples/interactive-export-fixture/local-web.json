@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "interactive-export-fixture",
+  "title": "Runtime Records",
+  "route": "/interactive-export-fixture",
+  "kind": "static",
+  "build": {
+    "commands": [["npm", "run", "build"]],
+    "output": "dist",
+    "environment": ["VITE_PUBLIC_BASE_PATH"]
+  },
+  "healthPath": "/interactive-export-fixture/",
+  "home": { "icon": "checklist", "accent": "#3859D6" },
+  "platform": { "contractVersion": 1, "templateVersion": 3, "uiVersion": "0.7.0", "capabilities": [] }
+}
