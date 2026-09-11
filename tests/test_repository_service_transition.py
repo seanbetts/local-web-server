@@ -1,6 +1,9 @@
+import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -24,6 +27,11 @@ from scripts.disposable_workflow_support import initialise_disposable_host_profi
 
 ROOT = Path(__file__).parents[1]
 REAL_TEMPORARY_DIRECTORY = tempfile.TemporaryDirectory
+
+
+class ReadFailingBytesIO(io.BytesIO):
+    def read(self, _size: int = -1) -> bytes:
+        raise OSError("read failed")
 
 
 class CleanupFailingTemporaryDirectory:
@@ -143,6 +151,74 @@ class RepositoryServiceTransitionVerifierTests(unittest.TestCase):
             activate=activation,
             emit=self.lines.append,
         )
+
+    def _start_process(self, source: str) -> subprocess.Popen[bytes]:
+        return subprocess.Popen(
+            (sys.executable, "-c", source),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+
+    def test_normal_exit_closes_owned_stderr_after_capture(self):
+        controller = transition_verifier._DisposableLaunchAgentController(self.root)
+        process = self._start_process(
+            "import sys; sys.stderr.buffer.write(b'captured error')"
+        )
+        controller.process = process
+        try:
+            process.wait(timeout=2)
+
+            controller._observe_exit()
+
+            self.assertIsNone(controller.process)
+            self.assertTrue(controller.throttled)
+            self.assertEqual(controller.errors, [b"captured error"])
+            self.assertIsNotNone(process.stderr)
+            self.assertTrue(process.stderr.closed)
+        finally:
+            if process.poll() is None:
+                transition_verifier._stop_process_group(process)
+            if process.stderr is not None and not process.stderr.closed:
+                process.stderr.close()
+
+    def test_explicit_stop_closes_owned_stderr_after_capture(self):
+        controller = transition_verifier._DisposableLaunchAgentController(self.root)
+        process = self._start_process("import time; time.sleep(60)")
+        controller.process = process
+        try:
+            controller._stop_process()
+
+            self.assertIsNone(controller.process)
+            self.assertIsNotNone(process.stderr)
+            self.assertTrue(process.stderr.closed)
+        finally:
+            if process.poll() is None:
+                transition_verifier._stop_process_group(process)
+            if process.stderr is not None and not process.stderr.closed:
+                process.stderr.close()
+
+    def test_capture_failure_closes_stderr_releases_process_and_propagates(self):
+        controller = transition_verifier._DisposableLaunchAgentController(self.root)
+        process = self._start_process("")
+        process.wait(timeout=2)
+        self.assertIsNotNone(process.stderr)
+        process.stderr.close()
+        stderr = ReadFailingBytesIO()
+        process.stderr = stderr
+        controller.process = process
+        try:
+            with self.assertRaisesRegex(OSError, "read failed"):
+                controller._observe_exit()
+
+            self.assertTrue(stderr.closed)
+            self.assertIsNone(controller.process)
+            controller._observe_exit()
+        finally:
+            if not stderr.closed:
+                stderr.close()
+            controller.process = None
 
     def test_disposable_profile_helper_initialises_one_private_revision(self):
         registry = self._create_private_profile("transition-platform")

@@ -180,7 +180,10 @@ class _DisposableLaunchAgentController:
     def _capture_stderr(self, process: subprocess.Popen[bytes]) -> None:
         if process.stderr is None:
             return
-        content = process.stderr.read(_MAX_SERVICE_EVIDENCE_BYTES + 1)
+        try:
+            content = process.stderr.read(_MAX_SERVICE_EVIDENCE_BYTES + 1)
+        finally:
+            process.stderr.close()
         if len(content) > _MAX_SERVICE_EVIDENCE_BYTES:
             raise RuntimeError("disposable service error output was too large")
         if content:
@@ -191,8 +194,10 @@ class _DisposableLaunchAgentController:
         if process is None or process.poll() is None:
             return
         process.wait()
-        self._capture_stderr(process)
-        self.process = None
+        try:
+            self._capture_stderr(process)
+        finally:
+            self.process = None
         self.throttled = True
 
     def _stop_process(self) -> None:
@@ -203,8 +208,10 @@ class _DisposableLaunchAgentController:
             _stop_process_group(process)
         else:
             process.wait()
-        self._capture_stderr(process)
-        self.process = None
+        try:
+            self._capture_stderr(process)
+        finally:
+            self.process = None
 
     def _launch(self) -> None:
         if self.host is None or self.host.start_command is None:
