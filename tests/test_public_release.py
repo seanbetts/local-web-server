@@ -1409,7 +1409,7 @@ class PublicCiWorkflowTests(unittest.TestCase):
             {"pull_request": {}, "workflow_dispatch": {}},
         )
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
-        self.assertEqual(set(self.jobs), {"python", "node", "macos"})
+        self.assertEqual(set(self.jobs), {"python", "node"})
 
         safe_git_environment = {
             "GIT_CONFIG_NOSYSTEM": "1",
@@ -1420,7 +1420,7 @@ class PublicCiWorkflowTests(unittest.TestCase):
         }
 
         uses: list[str] = []
-        expected_timeouts = {"python": 60, "node": 30, "macos": 30}
+        expected_timeouts = {"python": 60, "node": 30}
         for job_name, job in self.jobs.items():
             self.assertIsInstance(job, dict, job_name)
             self.assertNotIn("permissions", job, job_name)
@@ -1444,8 +1444,6 @@ class PublicCiWorkflowTests(unittest.TestCase):
                 "actions/setup-node@v7",
                 "actions/checkout@v7",
                 "actions/setup-node@v7",
-                "actions/checkout@v7",
-                "actions/setup-python@v7",
             ],
         )
         serialized = json.dumps(self.workflow, sort_keys=True).casefold()
@@ -1468,11 +1466,14 @@ class PublicCiWorkflowTests(unittest.TestCase):
                 for step in job["steps"]
                 if step.get("uses") == "actions/checkout@v7"
             )
-            self.assertEqual(checkout.get("with"), {"persist-credentials": False})
+            self.assertEqual(
+                checkout.get("with"),
+                {"persist-credentials": False, "set-safe-directory": False},
+            )
 
     def test_supported_runtimes_and_npm_cache_are_explicit(self):
         python_job = self.jobs["python"]
-        self.assertEqual(python_job["runs-on"], "ubuntu-24.04")
+        self.assertEqual(python_job["runs-on"], "macos-15")
         python_setup = next(
             step
             for step in python_job["steps"]
@@ -1512,23 +1513,21 @@ class PublicCiWorkflowTests(unittest.TestCase):
                 "cache-dependency-path": "package-lock.json",
             },
         )
-
-        macos_job = self.jobs["macos"]
-        self.assertEqual(macos_job["runs-on"], "macos-15")
-        macos_python = next(
-            step
-            for step in macos_job["steps"]
-            if step.get("uses") == "actions/setup-python@v7"
-        )
-        self.assertEqual(macos_python.get("with"), {"python-version": "3.14"})
-
-    def test_linux_jobs_run_complete_portable_verification(self):
+    def test_jobs_run_complete_supported_platform_verification(self):
         self.assertEqual(
             _workflow_runs(self.jobs["python"]),
             (
                 "npm ci --ignore-scripts",
+                "npx playwright install chromium",
+                "brew install caddy",
+                "caddy version | grep -E '^v2[.]'",
                 "python3 -m compileall -q local_web_server scripts tests",
-                "PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v",
+                (
+                    "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 "
+                    "PYTHONWARNINGS=error::ResourceWarning python3 -m unittest "
+                    "discover -s tests -v"
+                ),
+                "python3 scripts/verify_host_profile_workflow.py",
             ),
         )
         self.assertEqual(
@@ -1548,22 +1547,7 @@ class PublicCiWorkflowTests(unittest.TestCase):
             ),
         )
 
-    def test_macos_job_is_bounded_to_disposable_platform_checks(self):
-        self.assertEqual(
-            _workflow_runs(self.jobs["macos"]),
-            (
-                "brew install caddy",
-                "caddy version | grep -E '^v2[.]'",
-                (
-                    "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 "
-                    "PYTHONWARNINGS=error::ResourceWarning python3 -m unittest "
-                    "tests.test_host_profile_backup tests.test_host_profile_workflow "
-                    "tests.test_install tests.test_render -v"
-                ),
-                "python3 scripts/verify_host_profile_workflow.py",
-            ),
-        )
-
+    def test_jobs_are_bounded_to_disposable_platform_checks(self):
         all_commands = "\n".join(
             command
             for job in self.jobs.values()

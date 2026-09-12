@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import console from 'node:console';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,8 +22,8 @@ const REQUIRED_OFFLINE_INSTALL_FLAGS = Object.freeze([
   '--no-save',
 ]);
 
-function run(command, args, cwd) {
-  execFileSync(command, args, { cwd, stdio: 'inherit' });
+function run(command, args, cwd, environment = process.env) {
+  execFileSync(command, args, { cwd, env: environment, stdio: 'inherit' });
 }
 
 function createOfflineTarballInstallArgs(tarball) {
@@ -60,10 +62,28 @@ function assertOfflineInstallGuardRejectsTamperedArguments() {
 
 assertOfflineInstallGuardRejectsTamperedArguments();
 
-const consumerRoot = await mkdtemp(join(tmpdir(), 'local web ui consumer-'));
+const disposableRoot = await mkdtemp(join(tmpdir(), 'local web ui consumer-'));
+const consumerRoot = join(disposableRoot, 'consumer');
+const consumerCache = join(disposableRoot, 'npm-cache');
+await mkdir(consumerRoot);
+await mkdir(consumerCache);
+const npmEnvironment = {
+  ...process.env,
+  NPM_CONFIG_CACHE: consumerCache,
+  npm_config_cache: consumerCache,
+};
+const consumerDependencies = [
+  'react',
+  'react-dom',
+  'vite',
+  'typescript',
+  '@types/react',
+  '@types/react-dom',
+  '@types/node',
+];
 
 try {
-  if (!suppliedTarball) run(npm, ['run', 'build:ui'], repositoryRoot);
+  if (!suppliedTarball) run(npm, ['run', 'build:ui'], repositoryRoot, npmEnvironment);
 
   const packageDestination = join(consumerRoot, 'package');
   await mkdir(packageDestination);
@@ -76,10 +96,9 @@ try {
         private: true,
         type: 'module',
         // Apps supply the declared peers and their real TypeScript declarations.
-        // Resolve only these pinned tools from the offline npm cache, never source aliases.
+        // Link the exact locked root installations, never Local Web source aliases.
         devDependencies: Object.fromEntries(
-          ['react', 'react-dom', 'vite', 'typescript', '@types/react', '@types/react-dom', '@types/node']
-            .map((name) => [name, sourcePackage.devDependencies[name]]),
+          consumerDependencies.map((name) => [name, sourcePackage.devDependencies[name]]),
         ),
       },
       null,
@@ -260,10 +279,24 @@ try {
     )}\n`,
   );
 
+  for (const dependencyName of consumerDependencies) {
+    const dependencyRoot = join(repositoryRoot, 'node_modules', ...dependencyName.split('/'));
+    const dependencyPackage = JSON.parse(
+      await readFile(join(dependencyRoot, 'package.json'), 'utf8'),
+    );
+    if (dependencyPackage.version !== sourcePackage.devDependencies[dependencyName]) {
+      throw new Error(`consumer dependency ${dependencyName} does not match the lockfile install`);
+    }
+    const dependencyLink = join(consumerRoot, 'node_modules', ...dependencyName.split('/'));
+    await mkdir(dirname(dependencyLink), { recursive: true });
+    await symlink(dependencyRoot, dependencyLink, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+
   if (!suppliedTarball) run(
     npm,
     ['pack', '--workspace', '@local-web/ui', '--pack-destination', packageDestination],
     repositoryRoot,
+    npmEnvironment,
   );
   const [tarballName] = await readdir(packageDestination);
   if (!suppliedTarball && !tarballName?.endsWith('.tgz')) {
@@ -273,7 +306,7 @@ try {
   const tarball = suppliedTarball ?? join(packageDestination, tarballName);
   const installArgs = createOfflineTarballInstallArgs(tarball);
   assertOfflineTarballInstall(installArgs, tarball);
-  run(npm, installArgs, consumerRoot);
+  run(npm, installArgs, consumerRoot, npmEnvironment);
 
   const installedPackageRoot = join(consumerRoot, 'node_modules', '@local-web', 'ui');
   const installedPackage = JSON.parse(
@@ -402,5 +435,5 @@ export default defineConfig({ plugins: [
   }
   console.log('Packed dist-only consumer: Bundler + NodeNext types and hosted/offline Vite build passed.');
 } finally {
-  await rm(consumerRoot, { force: true, recursive: true });
+  await rm(disposableRoot, { force: true, recursive: true });
 }

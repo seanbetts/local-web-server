@@ -74,23 +74,21 @@ The public workflow runs for pull requests and explicit manual dispatches. It
 has only `contents: read` permission, does not retain checkout credentials, and
 does not consume repository secrets or run on push or deployment events.
 
-Ubuntu 24.04 runs the complete Python suite on Python 3.14 and the static,
-shared-UI, System Index, gallery, public-release, and dependency-audit checks on
-each supported Node.js major: 22, 24, and 26. npm's download cache is keyed by
-the committed lockfile; dependencies are installed with lifecycle scripts
-disabled.
+macOS 15 runs the complete Python 3.14 suite because the framework's filesystem
+and lifecycle contracts use macOS primitives. The job installs the locked Node
+dependencies without lifecycle scripts, Chromium, and Caddy 2 before running
+the suite and the disposable host-profile workflow. Its private profile,
+revision, backup, rendered Caddy configuration, and runtime fixtures remain
+beneath disposable workflow paths. It never invokes platform
+installation, LaunchAgent or Tailscale changes, application activation,
+deployment, or a real `config/local/apps.json`.
 
-The bounded macOS 15 job installs Caddy 2, runs the macOS-sensitive host-profile,
-installer, and renderer tests, and executes `npm run verify:host-profile`'s
-underlying disposable workflow. It creates its private profile, revision,
-backup, rendered Caddy configuration, and runtime fixtures only beneath the
-workflow's temporary root. It never invokes platform installation, LaunchAgent
-or Tailscale changes, application activation, deployment, or a real
-`config/local/apps.json`. CI therefore succeeds from a clean public checkout
-without private host state.
-
-The workflow does not run the browser suites. Contributors making rendered UI
-changes must still run the applicable Playwright commands listed above.
+Ubuntu 24.04 runs the static, shared-UI, System Index, gallery, public-release,
+and dependency-audit checks on each supported Node.js major: 22, 24, and 26.
+npm's download cache is keyed by the committed lockfile; dependencies are
+installed with lifecycle scripts disabled. The packed shared-UI consumer check
+uses a new empty cache and installs only the local package tarball in offline
+mode, so it cannot rely on packages fetched by an earlier CI step.
 
 ## Change discipline
 

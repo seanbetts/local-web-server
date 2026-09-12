@@ -195,18 +195,21 @@ class BackupTests(StoreFixture):
 
     @macos_writer
     def test_final_provenance_value_mismatch_and_oversized_value_are_refused(self):
-        original = backup_module._read_xattr
+        original_provenance = backup_module._provenance
+        original_read = backup_module._read_xattr
         output = self.root / "out.json"
-        def altered_final(fd, name):
+
+        def altered_final(fd):
             if output.exists():
                 return b"different-provenance"
-            return original(fd, name)
-        with patch.object(backup_module, "_read_xattr", side_effect=altered_final):
+            return original_provenance(fd)
+
+        with patch.object(backup_module, "_provenance", side_effect=altered_final):
             self.assert_backup_error(lambda: write_host_backup(self.paths, output, CLOCK))
         self.assertTrue(output.exists(), "must exercise post-clone validation")
         with patch.object(backup_module, "_native", return_value=lambda *args: 257):
             with self.assertRaises(OSError):
-                original(-1, b"com.apple.provenance")
+                original_read(-1, b"com.apple.provenance")
         with patch.object(backup_module, "_native", return_value=lambda *args: 65537):
             with self.assertRaises(OSError):
                 backup_module._list_xattrs(-1)

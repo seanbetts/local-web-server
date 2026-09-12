@@ -10,7 +10,7 @@
   "jobs": {
     "python": {
       "name": "Python 3.14",
-      "runs-on": "ubuntu-24.04",
+      "runs-on": "macos-15",
       "timeout-minutes": 60,
       "env": {
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -24,7 +24,8 @@
           "name": "Check out the public tree",
           "uses": "actions/checkout@v7",
           "with": {
-            "persist-credentials": false
+            "persist-credentials": false,
+            "set-safe-directory": false
           }
         },
         {
@@ -48,12 +49,28 @@
           "run": "npm ci --ignore-scripts"
         },
         {
+          "name": "Install the Chromium test browser",
+          "run": "npx playwright install chromium"
+        },
+        {
+          "name": "Install Caddy 2",
+          "run": "brew install caddy"
+        },
+        {
+          "name": "Report the selected Caddy version",
+          "run": "caddy version | grep -E '^v2[.]'"
+        },
+        {
           "name": "Compile Python sources",
           "run": "python3 -m compileall -q local_web_server scripts tests"
         },
         {
           "name": "Run the complete Python suite",
-          "run": "PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v"
+          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v"
+        },
+        {
+          "name": "Run the disposable host-profile workflow",
+          "run": "python3 scripts/verify_host_profile_workflow.py"
         }
       ]
     },
@@ -83,7 +100,8 @@
           "name": "Check out the public tree",
           "uses": "actions/checkout@v7",
           "with": {
-            "persist-credentials": false
+            "persist-credentials": false,
+            "set-safe-directory": false
           }
         },
         {
@@ -138,50 +156,6 @@
         {
           "name": "Audit production dependencies",
           "run": "npm audit --omit=dev"
-        }
-      ]
-    },
-    "macos": {
-      "name": "Disposable macOS platform verification",
-      "runs-on": "macos-15",
-      "timeout-minutes": 30,
-      "env": {
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_TERMINAL_PROMPT": "0",
-        "GIT_ASKPASS": "/usr/bin/false",
-        "SSH_ASKPASS": "/usr/bin/false"
-      },
-      "steps": [
-        {
-          "name": "Check out the public tree",
-          "uses": "actions/checkout@v7",
-          "with": {
-            "persist-credentials": false
-          }
-        },
-        {
-          "name": "Set up Python",
-          "uses": "actions/setup-python@v7",
-          "with": {
-            "python-version": "3.14"
-          }
-        },
-        {
-          "name": "Install Caddy 2",
-          "run": "brew install caddy"
-        },
-        {
-          "name": "Report the selected Caddy version",
-          "run": "caddy version | grep -E '^v2[.]'"
-        },
-        {
-          "name": "Run macOS profile, installer, and renderer tests",
-          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning python3 -m unittest tests.test_host_profile_backup tests.test_host_profile_workflow tests.test_install tests.test_render -v"
-        },
-        {
-          "name": "Run the disposable host-profile workflow",
-          "run": "python3 scripts/verify_host_profile_workflow.py"
         }
       ]
     }
