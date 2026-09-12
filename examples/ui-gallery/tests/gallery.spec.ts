@@ -190,6 +190,7 @@ test('skips unusable autofocus candidates but accepts a visible child of a hidde
     visibilityHidden.style.visibility = 'hidden';
     const visible = document.createElement('input');
     visible.autofocus = true;
+    visible.dataset.lwpAutofocus = 'true';
     visible.style.visibility = 'visible';
     visible.setAttribute('aria-label', 'Visible autofocus');
     visibilityHidden.append(visible);
@@ -198,6 +199,18 @@ test('skips unusable autofocus candidates but accepts a visible child of a hidde
   });
 
   const trigger = page.getByRole('button', { name: 'Open dialog' });
+  await trigger.click();
+  await expect(page.getByRole('textbox', { name: 'Visible autofocus' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+
+  await page.evaluate(() => {
+    const visible = document.querySelector<HTMLInputElement>('[aria-label="Visible autofocus"]');
+    if (!visible) throw new Error('visible autofocus fixture is unavailable');
+    visible.autofocus = false;
+    visible.removeAttribute('autofocus');
+    visible.removeAttribute('data-lwp-autofocus');
+  });
   await trigger.click();
   await expect(page.getByRole('textbox', { name: 'Visible autofocus' })).toBeFocused();
   await page.keyboard.press('Escape');
