@@ -958,12 +958,14 @@ class FleetUpdateWorkflowVerifier:
         self,
         *,
         temporary_directory_factory: Callable[..., tempfile.TemporaryDirectory[str]] = tempfile.TemporaryDirectory,
+        fleet_factory: Callable[..., _DisposableFleet] = _DisposableFleet,
         fail_after: str | None = None,
         emit: Callable[[str], None] = print,
     ) -> None:
         if fail_after is not None and fail_after not in EXPECTED_PHASES:
             raise ValueError("invalid disposable phase")
         self._temporary_directory_factory = temporary_directory_factory
+        self._fleet_factory = fleet_factory
         self._fail_after = fail_after
         self._emit = emit
 
@@ -975,7 +977,7 @@ class FleetUpdateWorkflowVerifier:
         phases: tuple[tuple[str, Callable[[], None]], ...] = ()
         try:
             temporary = self._temporary_directory_factory(prefix="local-web-fleet-update-")
-            fleet = _DisposableFleet(
+            fleet = self._fleet_factory(
                 Path(temporary.name), require_cli_preview=self._fail_after is None
             )
             phases = (

@@ -21,6 +21,7 @@ from local_web_server.public_base_path_migration import (
     PublicBasePathMigrationPlan,
     PublicBasePathMigrationResult,
 )
+from tests.suites import acceptance
 
 
 EXPECTED_PHASES = (
@@ -154,6 +155,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
         finally:
             workflow.close()
 
+    @acceptance
     def test_fixture_builds_its_ui_package_from_public_source_on_demand(self):
         root = (self.coding_root / "on-demand-ui-package").resolve()
         root.mkdir()
@@ -209,25 +211,34 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
         self.assertNotEqual(migration_verifier._managed_file_state(managed), expected)
 
     def test_every_injected_phase_failure_is_bounded_and_cleans_all_resources(self):
-        """Every real phase boundary must preserve sentinels and reap private state."""
+        """Every protocol failure is attributed without rebuilding the fixture."""
         live_state = migration_verifier._file_state(self.live_registry)
         external_state = migration_verifier._file_state(self.external_data)
         for failure_phase in EXPECTED_PHASES:
             with self.subTest(phase=failure_phase):
                 lines: list[str] = []
+                failure_index = EXPECTED_PHASES.index(failure_phase)
+
+                def command_factory(_root: Path, *_args: Path) -> tuple[str, ...]:
+                    protocol = "".join(
+                        f"PASS {index}\\n" for index in range(failure_index)
+                    )
+                    if failure_phase == EXPECTED_PHASES[-1]:
+                        protocol += "CLEAN FAIL\\n"
+                    return ("/usr/bin/printf", protocol)
+
                 verifier = migration_verifier.PublicBasePathMigrationWorkflowVerifier(
                     platform_repository=Path(__file__).parents[1],
                     coding_root=self.coding_root,
                     live_registry=self.live_registry,
                     external_data=self.external_data,
-                    failure_phase=failure_phase,
+                    supervised_command_factory=command_factory,
                     emit=lines.append,
                 )
 
                 started = time.monotonic()
                 self.assertEqual(verifier.run(), 1)
-                self.assertLess(time.monotonic() - started, 120)
-                failure_index = EXPECTED_PHASES.index(failure_phase)
+                self.assertLess(time.monotonic() - started, 2)
                 expected_lines = [
                     *(f"{phase} PASS" for phase in EXPECTED_PHASES[:failure_index]),
                     f"{failure_phase} FAIL",
@@ -249,6 +260,29 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
                 self.assertTrue(all(len(line.encode("ascii")) <= 128 for line in lines))
                 self.assertLessEqual(len(output.encode("ascii")), 2048)
                 self.assertEqual(list(self.coding_root.iterdir()), [])
+
+    @acceptance
+    def test_real_migration_recovers_retries_and_cleans_all_resources(self):
+        lines: list[str] = []
+        live_state = migration_verifier._file_state(self.live_registry)
+        external_state = migration_verifier._file_state(self.external_data)
+        verifier = migration_verifier.PublicBasePathMigrationWorkflowVerifier(
+            platform_repository=Path(__file__).parents[1],
+            coding_root=self.coding_root,
+            live_registry=self.live_registry,
+            external_data=self.external_data,
+            emit=lines.append,
+        )
+
+        self.assertEqual(verifier.run(), 0)
+        self.assertEqual(lines, [f"{phase} PASS" for phase in EXPECTED_PHASES])
+        self.assertEqual(list(self.coding_root.iterdir()), [])
+        self.assertEqual(
+            migration_verifier._file_state(self.live_registry), live_state
+        )
+        self.assertEqual(
+            migration_verifier._file_state(self.external_data), external_state
+        )
 
     def test_success_emits_exactly_one_pass_line_per_phase(self):
         """Duplicate or extra public output must fail the bounded output contract."""
@@ -362,6 +396,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
         self.assertEqual(migrator.apply_calls, [repository])
         self.assertNotIn("PRIVATE", str(preview) + str(applied))
 
+    @acceptance
     def test_corrupted_generated_caddy_route_fails_the_real_workflow(self):
         lines: list[str] = []
         live_state = migration_verifier._file_state(self.live_registry)
@@ -387,6 +422,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
             migration_verifier._file_state(self.external_data), external_state
         )
 
+    @acceptance
     def test_real_caddy_disables_admin_and_preserves_external_home_state(self):
         external_state_root = self.root / "external-caddy-state"
         external_home = external_state_root / "home"
@@ -490,6 +526,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
             if owned_listener:
                 listener.close()
 
+    @acceptance
     def test_noisy_production_build_is_capped_and_fails_in_finite_time(self):
         lines: list[str] = []
         live_state = migration_verifier._file_state(self.live_registry)
@@ -522,6 +559,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
             migration_verifier._file_state(self.external_data), external_state
         )
 
+    @acceptance
     def test_controller_launches_the_exact_validated_plist_contract(self):
         runtime = self.root / "runtime"
         layout = migration_verifier.RuntimeLayout(runtime, "public-base-path-fixture")
@@ -617,6 +655,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
             finally:
                 controller.close()
 
+    @acceptance
     def test_controller_launches_with_the_generated_plist_environment(self):
         runtime = self.root / "runtime"
         layout = migration_verifier.RuntimeLayout(runtime, "public-base-path-fixture")
@@ -787,6 +826,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn(PARENT_SECRET_NAME, environment)
 
+    @acceptance
     def test_outer_supervision_bounds_a_hung_workflow_process(self):
         lines: list[str] = []
         pid_file = self.root / "worker.pid"
@@ -819,6 +859,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.killpg(int(pid_file.read_text()), 0)
 
+    @acceptance
     def test_successful_worker_cleanup_never_replays_the_pid_ledger(self):
         lines: list[str] = []
 
@@ -914,6 +955,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
             [EXPECTED_PHASES[0] + " PASS", EXPECTED_PHASES[1] + " FAIL", "cleanup FAIL"],
         )
 
+    @acceptance
     def test_reaper_finds_owned_descendant_after_group_leader_exits(self):
         token = "a" * 64
         child_pid_file = self.root / "descendant.pid"
@@ -1096,6 +1138,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
             )
         kill.assert_called_once_with(4242, signal.SIGTERM)
 
+    @acceptance
     def test_supervisor_stops_noisy_worker_at_the_output_cap(self):
         lines: list[str] = []
         pid_file = self.root / "noisy-worker.pid"
@@ -1127,6 +1170,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.killpg(int(pid_file.read_text()), 0)
 
+    @acceptance
     def test_supervisor_escalates_term_resistant_descendant_after_leader_exit(self):
         lines: list[str] = []
         child_pid_file = self.root / "resistant-child.pid"
@@ -1168,6 +1212,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
+    @acceptance
     def test_supervisor_reaps_term_resistant_detached_setsid_descendant(self):
         lines: list[str] = []
         child_pid_file = self.root / "detached-child.pid"
@@ -1209,6 +1254,7 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
+    @acceptance
     def test_exception_paths_reap_active_ledger_before_temporary_deletion(self):
         scenarios = ("non-ascii", "read", "termination")
         for scenario in scenarios:

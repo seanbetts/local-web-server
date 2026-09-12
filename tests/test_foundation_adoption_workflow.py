@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from local_web_server.host_profile import HostProfilePaths
 from local_web_server.host_profile_store import HostProfileStore
+from tests.suites import acceptance
 
 import scripts.verify_foundation_adoption_workflow as foundation_verifier
 
@@ -30,10 +31,8 @@ EXPECTED_LABELS = (
     "cleanup",
 )
 
-INJECTED_FAILURE_POINTS = (
-    "preview React foundation without writes",
+REAL_FAILURE_POINTS = (
     "apply exact platform-owned foundation files",
-    "reject legacy release outcome",
     "pass full app check and activation eligibility",
 )
 
@@ -186,6 +185,7 @@ class FoundationAdoptionWorkflowTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(paths.local.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(paths.profile.stat().st_mode), 0o600)
 
+    @acceptance
     def test_verify_returns_the_exact_ordered_bounded_evidence(self):
         """Dropping, renaming, or reordering a real acceptance phase must fail."""
 
@@ -203,6 +203,7 @@ class FoundationAdoptionWorkflowTests(unittest.TestCase):
             self, RecordingTemporaryDirectory.process_ledgers
         )
 
+    @acceptance
     def test_preview_phase_accepts_the_generated_context_adapter_paths(self):
         """A current foundation preview includes its managed context adapter files."""
 
@@ -315,6 +316,7 @@ class FoundationAdoptionWorkflowTests(unittest.TestCase):
                     )
                     self.assertEqual(labels, [])
 
+    @acceptance
     def test_run_uses_a_disposable_private_state_boundary_in_every_outcome(self):
         """The command boundary must isolate host state and remove owned state."""
 
@@ -830,10 +832,33 @@ class FoundationAdoptionWorkflowTests(unittest.TestCase):
                     changed_paths_after(mutation), frozenset({Path("changing")})
                 )
 
-    def test_every_popen_is_grouped_and_injected_failures_clean_owned_state(self):
-        """Every verifier child is grouped and gone after each injected failure."""
+    def test_every_phase_reports_its_injected_failure_without_running_toolchain(self):
+        """Every operation label is attributed by the lightweight phase harness."""
 
-        for fail_after in INJECTED_FAILURE_POINTS:
+        for fail_after in EXPECTED_LABELS[:-1]:
+            with self.subTest(fail_after=fail_after):
+                labels: list[str] = []
+                actions: list[str] = []
+                with self.assertRaises(
+                    foundation_verifier.FoundationAdoptionError
+                ) as caught:
+                    foundation_verifier._phase(
+                        fail_after,
+                        lambda: actions.append(fail_after),
+                        labels,
+                        fail_after,
+                    )
+
+                self.assertEqual(actions, [fail_after])
+                self.assertEqual(labels, [fail_after])
+                self.assertEqual(str(caught.exception), fail_after)
+                self.assertIsNone(caught.exception.__cause__)
+
+    @acceptance
+    def test_real_failure_states_group_children_and_clean_owned_state(self):
+        """Representative early and late failures reap their distinct resources."""
+
+        for fail_after in REAL_FAILURE_POINTS:
             with self.subTest(fail_after=fail_after):
                 RecordingTemporaryDirectory.created = []
                 RecordingTemporaryDirectory.process_ledgers = []

@@ -6,9 +6,11 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from local_web_server.host_profile import HostProfilePaths
 from local_web_server.host_profile_store import HostProfileStore
+from tests.suites import acceptance
 
 
 class FleetUpdateWorkflowTests(unittest.TestCase):
@@ -23,6 +25,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
             "python3 scripts/verify_fleet_update_workflow.py",
         )
 
+    @acceptance
     def test_disposable_fleet_initialises_one_mode_correct_private_revision(self):
         import scripts.verify_fleet_update_workflow as verifier
 
@@ -71,12 +74,55 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
             with self.subTest(phase=phase):
                 roots: list[Path] = []
                 lines: list[str] = []
+                actions: list[str] = []
+
+                class LightweightFleet:
+                    def __init__(self, root: Path, *, require_cli_preview: bool):
+                        self.root = root
+                        self.require_cli_preview = require_cli_preview
+
+                    def create(self):
+                        actions.append(verifier.EXPECTED_PHASES[0])
+
+                    def preview(self):
+                        actions.append(verifier.EXPECTED_PHASES[1])
+
+                    def assert_preview_pure(self):
+                        actions.append(verifier.EXPECTED_PHASES[2])
+
+                    def apply(self):
+                        actions.append(verifier.EXPECTED_PHASES[3])
+
+                    def verify_commits(self):
+                        actions.append(verifier.EXPECTED_PHASES[4])
+
+                    def verify_releases(self):
+                        actions.append(verifier.EXPECTED_PHASES[5])
+
+                    def verify_unsupported(self):
+                        actions.append(verifier.EXPECTED_PHASES[6])
+
+                    def verify_recovery(self):
+                        actions.append(verifier.EXPECTED_PHASES[7])
+
+                    def verify_aggregate(self):
+                        actions.append(verifier.EXPECTED_PHASES[8])
+
+                    def close(self):
+                        actions.append(verifier.EXPECTED_PHASES[9])
+
                 verifier_instance = verifier.FleetUpdateWorkflowVerifier(
                     temporary_directory_factory=verifier.RecordingTemporaryDirectory(roots),
+                    fleet_factory=LightweightFleet,
                     fail_after=phase,
                     emit=lines.append,
                 )
                 self.assertEqual(verifier_instance.run(), 1)
+                phase_index = verifier.EXPECTED_PHASES.index(phase)
+                expected_actions = list(verifier.EXPECTED_PHASES[: phase_index + 1])
+                if verifier.EXPECTED_PHASES[-1] not in expected_actions:
+                    expected_actions.append(verifier.EXPECTED_PHASES[-1])
+                self.assertEqual(actions, expected_actions)
                 self.assertEqual(len(roots), 1)
                 self.assertFalse(roots[0].exists())
                 self.assertNotIn(str(roots[0]), "\n".join(lines))
@@ -84,16 +130,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                 for process_group in verifier.stopped_service_process_groups():
                     self.assertFalse(verifier._group_exists(process_group))
 
-    def test_bounded_runner_cleans_process_group_on_nonzero_timeout_and_overflow(self):
-        import scripts.verify_fleet_update_workflow as verifier
-
-        for outcome in ("success", "nonzero", "timeout", "overflow"):
-            with self.subTest(outcome=outcome):
-                result = verifier.run_bounded_probe(outcome)
-                self.assertEqual(result, outcome)
-                self.assertTrue(verifier.probe_process_group_reaped())
-                self.assertTrue(verifier.probe_descendant_reaped())
-
+    @acceptance
     def test_real_disposable_coordinator_recovers_and_continues(self):
         """The acceptance uses the production updater/checker, not marker doubles."""
         import scripts.verify_fleet_update_workflow as verifier
@@ -147,7 +184,10 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
         import scripts.verify_fleet_update_workflow as verifier
 
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        with (
+            patch.object(verifier, "verify", return_value=verifier.EXPECTED_PHASES),
+            contextlib.redirect_stdout(output),
+        ):
             self.assertEqual(verifier.main(), 0)
         rendered = output.getvalue()
         self.assertEqual(
@@ -156,6 +196,32 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
         for forbidden in ("PRIVATE", "fixture-command", "ENV_MARKER", tempfile.gettempdir()):
             self.assertNotIn(forbidden, rendered)
 
+    @acceptance
+    def test_real_late_cleanup_failure_removes_owned_resources(self):
+        import scripts.verify_fleet_update_workflow as verifier
+
+        roots: list[Path] = []
+        lines: list[str] = []
+        verifier_instance = verifier.FleetUpdateWorkflowVerifier(
+            temporary_directory_factory=verifier.RecordingTemporaryDirectory(roots),
+            fail_after=verifier.EXPECTED_PHASES[-1],
+            emit=lines.append,
+        )
+
+        self.assertEqual(verifier_instance.run(), 1)
+        self.assertEqual(
+            lines,
+            [
+                *verifier.EXPECTED_PHASES[:-1],
+                verifier.EXPECTED_PHASES[-1].replace(" PASS", " FAIL"),
+            ],
+        )
+        self.assertEqual(len(roots), 1)
+        self.assertFalse(roots[0].exists())
+        for process_group in verifier.stopped_service_process_groups():
+            self.assertFalse(verifier._group_exists(process_group))
+
+    @acceptance
     def test_bounded_runner_reaps_descendants_after_every_outcome(self):
         """A dead leader must not allow an inherited-pipe descendant to survive."""
         import scripts.verify_fleet_update_workflow as verifier
@@ -167,6 +233,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                 self.assertTrue(verifier.probe_process_group_reaped())
                 self.assertTrue(verifier.probe_descendant_reaped())
 
+    @acceptance
     def test_recovery_requires_the_exact_original_tree_and_platform_bytes(self):
         import scripts.verify_fleet_update_workflow as verifier
 
@@ -205,6 +272,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
             finally:
                 fleet.close()
 
+    @acceptance
     def test_service_activation_requires_exact_release_and_declared_command(self):
         import scripts.verify_fleet_update_workflow as verifier
 
