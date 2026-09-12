@@ -140,6 +140,23 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _discover_suite() -> unittest.TestSuite | None:
+    loader = unittest.TestLoader()
+    try:
+        discovered = loader.discover(
+            str(ROOT / "tests"), top_level_dir=str(ROOT)
+        )
+    except Exception as error:
+        print(f"Test discovery failed: {error}", file=sys.stderr)
+        return None
+    if loader.errors:
+        print("Test discovery failed:", file=sys.stderr)
+        for error in loader.errors:
+            print(error.rstrip(), file=sys.stderr)
+        return None
+    return discovered
+
+
 @contextmanager
 def _owned_test_tmpdir():
     previous_environment = os.environ.get("TMPDIR")
@@ -164,9 +181,9 @@ def _owned_test_tmpdir():
 def main(arguments: list[str] | None = None) -> int:
     options = _parser().parse_args(arguments)
     with _owned_test_tmpdir():
-        discovered = unittest.defaultTestLoader.discover(
-            str(ROOT / "tests"), top_level_dir=str(ROOT)
-        )
+        discovered = _discover_suite()
+        if discovered is None:
+            return 1
         partition = partition_suite(discovered)
         if options.list:
             return list_suite(options.suite, partition)

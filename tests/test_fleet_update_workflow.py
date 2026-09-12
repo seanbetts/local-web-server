@@ -25,33 +25,6 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
             "python3 scripts/verify_fleet_update_workflow.py",
         )
 
-    @acceptance
-    def test_disposable_fleet_initialises_one_mode_correct_private_revision(self):
-        import scripts.verify_fleet_update_workflow as verifier
-
-        with tempfile.TemporaryDirectory() as temporary:
-            fleet = verifier._DisposableFleet(
-                Path(temporary), require_cli_preview=False
-            )
-            try:
-                fleet.create()
-                paths = HostProfilePaths.for_repository(fleet.platform)
-                store = HostProfileStore(paths)
-
-                self.assertEqual(fleet.registry, paths.profile)
-                self.assertEqual(len(store.revisions()), 1)
-                self.assertEqual(store.read_current(), paths.profile.read_bytes())
-                self.assertEqual(stat.S_IMODE(paths.local.stat().st_mode), 0o700)
-                self.assertEqual(stat.S_IMODE(paths.history.stat().st_mode), 0o700)
-                self.assertEqual(stat.S_IMODE(paths.backups.stat().st_mode), 0o700)
-                self.assertEqual(stat.S_IMODE(paths.profile.stat().st_mode), 0o600)
-                self.assertEqual(
-                    stat.S_IMODE(next(paths.history.iterdir()).stat().st_mode),
-                    0o600,
-                )
-            finally:
-                fleet.close()
-
     def test_workflow_has_exact_phases_and_cleans_every_injected_failure(self):
         import scripts.verify_fleet_update_workflow as verifier
 
@@ -123,6 +96,13 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                 if verifier.EXPECTED_PHASES[-1] not in expected_actions:
                     expected_actions.append(verifier.EXPECTED_PHASES[-1])
                 self.assertEqual(actions, expected_actions)
+                expected_lines = [
+                    *verifier.EXPECTED_PHASES[:phase_index],
+                    phase.replace(" PASS", " FAIL"),
+                ]
+                if phase != verifier.EXPECTED_PHASES[-1]:
+                    expected_lines.append(verifier.EXPECTED_PHASES[-1])
+                self.assertEqual(lines, expected_lines)
                 self.assertEqual(len(roots), 1)
                 self.assertFalse(roots[0].exists())
                 self.assertNotIn(str(roots[0]), "\n".join(lines))
@@ -143,6 +123,19 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
             fleet = verifier._DisposableFleet(Path(temporary))
             try:
                 fleet.create()
+                paths = HostProfilePaths.for_repository(fleet.platform)
+                profile = HostProfileStore(paths)
+                self.assertEqual(fleet.registry, paths.profile)
+                self.assertEqual(len(profile.revisions()), 1)
+                self.assertEqual(profile.read_current(), paths.profile.read_bytes())
+                self.assertEqual(stat.S_IMODE(paths.local.stat().st_mode), 0o700)
+                self.assertEqual(stat.S_IMODE(paths.history.stat().st_mode), 0o700)
+                self.assertEqual(stat.S_IMODE(paths.backups.stat().st_mode), 0o700)
+                self.assertEqual(stat.S_IMODE(paths.profile.stat().st_mode), 0o600)
+                self.assertEqual(
+                    stat.S_IMODE(next(paths.history.iterdir()).stat().st_mode),
+                    0o600,
+                )
                 fleet.preview()
                 self.assertEqual(
                     fleet.cli_preview_statuses(),
@@ -151,9 +144,6 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                         ("ready-static", "READY"),
                         ("legacy", "SKIPPED"),
                     ),
-                )
-                profile = HostProfileStore(
-                    HostProfilePaths.for_repository(fleet.platform)
                 )
                 self.assertEqual(profile.read_current(), fleet.registry.read_bytes())
                 self.assertEqual(len(profile.revisions()), 3)

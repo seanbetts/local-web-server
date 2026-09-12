@@ -11,6 +11,33 @@ from tests.suites import ACCEPTANCE_MARKER, acceptance
 
 
 class RunTestsTests(unittest.TestCase):
+    def test_discovery_error_fails_acceptance_execution_and_listing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tests = root / "tests"
+            tests.mkdir()
+            (tests / "__init__.py").write_text("", encoding="utf-8")
+            (tests / "test_broken_import.py").write_text(
+                "raise RuntimeError('broken discovery fixture')\n",
+                encoding="utf-8",
+            )
+
+            for arguments in (
+                ["--suite", "acceptance"],
+                ["--suite", "acceptance", "--list"],
+            ):
+                with self.subTest(arguments=arguments):
+                    errors = io.StringIO()
+                    with (
+                        patch.object(run_tests, "ROOT", root),
+                        contextlib.redirect_stdout(io.StringIO()),
+                        contextlib.redirect_stderr(errors),
+                    ):
+                        result = run_tests.main(arguments)
+
+                    self.assertEqual(result, 1)
+                    self.assertIn("test_broken_import", errors.getvalue())
+
     def test_partition_preserves_discovery_and_selects_class_and_method_markers(self):
         class ExampleTests(unittest.TestCase):
             def test_fast(self):
@@ -62,6 +89,8 @@ class RunTestsTests(unittest.TestCase):
         observed: dict[str, object] = {}
 
         class RecordingLoader:
+            errors: list[str] = []
+
             def discover(self, *_args, **_kwargs):
                 observed["tmpdir"] = tempfile.gettempdir()
                 observed["warnings"] = os.environ.get("PYTHONWARNINGS")
@@ -84,8 +113,8 @@ class RunTestsTests(unittest.TestCase):
                     ),
                     patch.object(
                         run_tests.unittest,
-                        "defaultTestLoader",
-                        RecordingLoader(),
+                        "TestLoader",
+                        return_value=RecordingLoader(),
                     ),
                     contextlib.redirect_stdout(io.StringIO()),
                 ):
