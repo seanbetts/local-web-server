@@ -157,7 +157,7 @@ test('supports keyboard focus, actions, forms, tooltip, and dialog focus return'
   expect(messages).toEqual([]);
 });
 
-test('uses native focus semantics to skip unusable dialog autofocus candidates', async ({ page }) => {
+test('skips unusable autofocus candidates but accepts a visible child of a hidden ancestor', async ({ page }) => {
   const messages = await openGallery(page);
   await page.evaluate(() => {
     const dialog = document.querySelector<HTMLDialogElement>('dialog');
@@ -186,16 +186,57 @@ test('uses native focus semantics to skip unusable dialog autofocus candidates',
     marker.dataset.lwpAutofocus = 'true';
     marker.textContent = 'Unfocusable marker';
 
-    const fallback = document.createElement('button');
-    fallback.type = 'button';
-    fallback.textContent = 'Browser focus fallback';
-    body.prepend(disabled, hidden, inert, marker);
-    body.append(fallback);
+    const visibilityHidden = document.createElement('div');
+    visibilityHidden.style.visibility = 'hidden';
+    const visible = document.createElement('input');
+    visible.autofocus = true;
+    visible.style.visibility = 'visible';
+    visible.setAttribute('aria-label', 'Visible autofocus');
+    visibilityHidden.append(visible);
+
+    body.prepend(disabled, hidden, inert, marker, visibilityHidden);
   });
 
   const trigger = page.getByRole('button', { name: 'Open dialog' });
   await trigger.click();
-  await expect(page.getByRole('button', { name: 'Browser focus fallback' })).toBeFocused();
+  await expect(page.getByRole('textbox', { name: 'Visible autofocus' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  expect(messages).toEqual([]);
+});
+
+test('uses Close without scrolling when no dialog body control can receive focus', async ({ page }) => {
+  const messages = await openGallery(page);
+  await page.evaluate(() => {
+    const dialog = document.querySelector<HTMLDialogElement>('dialog');
+    const body = dialog?.querySelector<HTMLElement>('.lwp-dialog__body');
+    const existingInput = body?.querySelector<HTMLInputElement>('input');
+    const action = dialog?.querySelector<HTMLButtonElement>('.lwp-dialog__actions button');
+    if (!body || !existingInput || !action) throw new Error('gallery dialog fixture is unavailable');
+
+    existingInput.disabled = true;
+    existingInput.removeAttribute('autofocus');
+    existingInput.removeAttribute('data-lwp-autofocus');
+    action.disabled = true;
+
+    const hidden = document.createElement('div');
+    hidden.hidden = true;
+    hidden.innerHTML = '<input data-lwp-autofocus="true" aria-label="Hidden autofocus">';
+    const marker = document.createElement('span');
+    marker.dataset.lwpAutofocus = 'true';
+    marker.textContent = 'Unfocusable marker';
+    body.prepend(hidden, marker);
+  });
+
+  const trigger = page.getByRole('button', { name: 'Open dialog' });
+  await trigger.scrollIntoViewIfNeeded();
+  await trigger.focus();
+  const scrollBeforeOpen = await page.evaluate(() => window.scrollY);
+  await trigger.press('Enter');
+
+  await expect(page.getByRole('dialog', { name: 'Gallery dialog' })
+    .getByRole('button', { name: 'Close' })).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBeforeOpen);
   await page.keyboard.press('Escape');
   await expect(trigger).toBeFocused();
   expect(messages).toEqual([]);
