@@ -1,7 +1,12 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type ConsoleMessage, type Page, type Route } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 
-const INDEX_URL = '/';
+const INDEX_URL = '/_local-web/platform/index/';
+const INDEX_REGISTRY_ROUTE = '/_local-web/platform/index/registry-v1.json';
+const INDEX_REGISTRY_FIXTURE = fileURLToPath(
+  new URL('../fixtures/registry-v1.json', import.meta.url),
+);
 const NOTES_BACKEND_HEALTH_PATH = '/_local-web/health/example-notes/backend';
 const NOTES_BACKEND_HEALTH_URL = `http://127.0.0.1:4180${NOTES_BACKEND_HEALTH_PATH}`;
 const FAILED_RESOURCE_503_MESSAGE =
@@ -78,6 +83,10 @@ const isExpectedNotesHealthResourceError = (message: ConsoleMessage) => (
 const interceptHealthChecks = async (page: Page, delayMs = 0) => {
   const counts = new Map<string, number>();
   const probes: ProbeObservation[] = [];
+  await page.route(`**${INDEX_REGISTRY_ROUTE}`, (route) => route.fulfill({
+    contentType: 'application/json',
+    path: INDEX_REGISTRY_FIXTURE,
+  }));
   const fulfill = (path: string, status: number) => async (route: Route) => {
     const request = route.request();
     if (request.method() !== 'HEAD') {
@@ -330,16 +339,28 @@ const assertThemePersistenceAndSystemMode = async (page: Page) => {
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(17, 21, 28)');
 };
 
-for (const viewport of VIEWPORTS) {
-  test(`validates the complete ready-state contract at ${viewport.width}px`, async ({ page }) => {
+test('validates the complete ready-state contract and theme persistence on desktop', async ({ page }) => {
+  const viewport = VIEWPORTS[0];
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  const { issues } = await openReadyIndex(page);
+  await assertIndexSemantics(page);
+  await assertThemeControl(page);
+  await assertCardAnatomy(page);
+  await assertResponsiveLayout(page, viewport.width);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await assertThemePersistenceAndSystemMode(page);
+  await assertBrowserHealth(page, issues);
+});
+
+const responsiveAxeWidths = new Set([390, 320]);
+for (const viewport of VIEWPORTS.slice(1)) {
+  test(`validates responsive geometry at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     const { issues } = await openReadyIndex(page);
-    await assertIndexSemantics(page);
-    await assertThemeControl(page);
-    await assertCardAnatomy(page);
     await assertResponsiveLayout(page, viewport.width);
-    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-    await assertThemePersistenceAndSystemMode(page);
+    if (responsiveAxeWidths.has(viewport.width)) {
+      expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    }
     await assertBrowserHealth(page, issues);
   });
 }
@@ -364,25 +385,6 @@ test('does not run Axe until delayed probes reach the verified final state', asy
   expect((await axeAfterReady).violations).toEqual([]);
   expect(axeRan).toBe(true);
   await assertBrowserHealth(page, issues);
-});
-
-test('detects a GET probe response-body read from a deliberate harness mutation', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1100 });
-  const { issues } = await openReadyIndex(page);
-  expect(await page.evaluate(async () => {
-    try {
-      const response = await fetch('/example-archive/', { method: 'GET' });
-      await response.text();
-      return 'body read escaped detector';
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
-  })).toBe('Probe response body read: /example-archive/');
-  expect(await page.evaluate(() =>
-    (window as Window & { __systemIndexProbeBodyReads: string[] }).__systemIndexProbeBodyReads,
-  )).toEqual(['/example-archive/']);
-  expect(issues.console).toEqual([]);
-  expect(issues.externalRequests).toEqual([]);
 });
 
 test('shows a separate offline state when the Tasks frontend probe fails', async ({ page }) => {

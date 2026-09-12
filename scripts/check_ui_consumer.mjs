@@ -8,9 +8,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8'));
+const prepared = process.argv.length === 3 && process.argv[2] === '--prepared';
 const suppliedTarball = process.argv.length === 4 && process.argv[2] === '--tarball'
   ? resolve(process.argv[3]) : undefined;
-if (process.argv.length !== 2 && !suppliedTarball) throw new Error('usage: check_ui_consumer.mjs [--tarball path]');
+if (process.argv.length !== 2 && !prepared && !suppliedTarball) {
+  throw new Error('usage: check_ui_consumer.mjs [--prepared | --tarball path]');
+}
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const REQUIRED_OFFLINE_INSTALL_FLAGS = Object.freeze([
   '--offline',
@@ -83,7 +86,9 @@ const consumerDependencies = [
 ];
 
 try {
-  if (!suppliedTarball) run(npm, ['run', 'build:ui'], repositoryRoot, npmEnvironment);
+  if (!prepared && !suppliedTarball) {
+    run(npm, ['run', 'build:ui'], repositoryRoot, npmEnvironment);
+  }
 
   const packageDestination = join(consumerRoot, 'package');
   await mkdir(packageDestination);

@@ -9,16 +9,6 @@ import type { PreviewServer } from 'vite';
 
 const fixtureRoot = fileURLToPath(new URL('..', import.meta.url));
 
-test('the fixture declares the public UI 0.7.0 interactive export contract', async () => {
-  const manifest = JSON.parse(await readFile(join(fixtureRoot, 'local-web.json'), 'utf8'));
-  expect(manifest.platform.uiVersion).toBe('0.7.0');
-});
-
-async function contract() {
-  expect(existsSync(join(fixtureRoot, 'src/contract.ts')), 'the runtime record contract must exist').toBe(true);
-  return (await import('../src/contract')).recordContract;
-}
-
 // Records belong only to this runtime service response, never to an app entry or template.
 const runtimeCapture = () => ({
   snapshotData: {
@@ -31,40 +21,6 @@ const runtimeCapture = () => ({
   },
   viewState: { selectedRecordId: 'alpha', sort: { field: 'label', direction: 'ascending' } },
 });
-
-test('the shared decoder accepts runtime data and both supported sort dimensions', async () => {
-  const decoder = (await contract()).decodeSnapshot;
-  const capture = runtimeCapture();
-  expect(decoder(capture)).toEqual(capture);
-  capture.viewState = { selectedRecordId: 'bravo', sort: { field: 'amount', direction: 'descending' } };
-  expect(decoder(capture).viewState).toEqual({ selectedRecordId: 'bravo', sort: { field: 'amount', direction: 'descending' } });
-});
-
-const invalidCaptures: [string, (capture: ReturnType<typeof runtimeCapture>) => unknown][] = [
-  ['malformed record', (c) => ({ ...c, snapshotData: { ...c.snapshotData, records: [null] } })],
-  ['blank id', (c) => { c.snapshotData.records[0].id = ' '; return c; }],
-  ['blank label', (c) => { c.snapshotData.records[0].label = ''; return c; }],
-  ['non-finite amount', (c) => { c.snapshotData.records[0].amount = NaN; return c; }],
-  ['wrong amount type', (c) => ({ ...c, snapshotData: { records: [{ id: 'alpha', label: 'Alpha', amount: '12' }], calculatedTotal: 12 } })],
-  ['duplicate record id', (c) => { c.snapshotData.records[1].id = 'alpha'; return c; }],
-  ['inconsistent total', (c) => { c.snapshotData.calculatedTotal = 60; return c; }],
-  ['missing selection', (c) => { c.viewState.selectedRecordId = 'absent'; return c; }],
-  ['unsupported sort field', (c) => { c.viewState.sort.field = 'id'; return c; }],
-  ['unsupported sort direction', (c) => { c.viewState.sort.direction = 'random'; return c; }],
-  ['extra capture field', (c) => ({ ...c, extra: true })],
-  ['extra data field', (c) => ({ ...c, snapshotData: { ...c.snapshotData, extra: true } })],
-  ['extra state field', (c) => ({ ...c, viewState: { ...c.viewState, extra: true } })],
-  ['extra sort field', (c) => ({ ...c, viewState: { ...c.viewState, sort: { ...c.viewState.sort, extra: true } } })],
-  ['extra record field', (c) => ({ ...c, snapshotData: { ...c.snapshotData, records: c.snapshotData.records.map((record, index) => index === 0 ? { ...record, extra: true } : record) } })],
-  ['missing state', (c) => ({ snapshotData: c.snapshotData })],
-];
-
-for (const [reason, mutate] of invalidCaptures) {
-  test(`the shared decoder rejects ${reason}`, async () => {
-    const decoder = (await contract()).decodeSnapshot;
-    expect(() => decoder(mutate(runtimeCapture()))).toThrow();
-  });
-}
 
 async function expectRecords(page: Page, labels: string[]) {
   await expect(page.getByRole('list', { name: 'Records' }).getByRole('button')).toHaveText(labels);

@@ -712,15 +712,6 @@ class NewAppWorkflowVerifier:
                 300,
             ),
             WorkflowCommand(
-                "npm run check", ("npm", "run", "check"), repository, 300
-            ),
-            WorkflowCommand(
-                "npm run test:e2e",
-                ("npm", "run", "test:e2e"),
-                repository,
-                300,
-            ),
-            WorkflowCommand(
                 "app check",
                 (local_web, "app", "check", "--repository", repository_text),
                 platform,

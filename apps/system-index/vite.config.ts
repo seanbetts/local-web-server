@@ -14,6 +14,24 @@ function productionBasePath() {
     config(_config: unknown, environment: { command: 'build' | 'serve' }) {
       return environment.command === 'build' ? { base: PLATFORM_BASE } : undefined;
     },
+    configurePreviewServer(server: {
+      middlewares: {
+        use: (
+          handler: (
+            request: { url?: string },
+            response: unknown,
+            next: () => void,
+          ) => void,
+        ) => void;
+      };
+    }) {
+      server.middlewares.use((request, _response, next) => {
+        if (request.url?.startsWith(PLATFORM_BASE)) {
+          request.url = `/${request.url.slice(PLATFORM_BASE.length)}`;
+        }
+        next();
+      });
+    },
     name: 'system-index-production-base-path',
   };
 }

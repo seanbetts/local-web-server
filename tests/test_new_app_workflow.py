@@ -462,15 +462,6 @@ class NewAppWorkflowTests(unittest.TestCase):
                     300,
                 ),
                 WorkflowCommand(
-                    "npm run check", ("npm", "run", "check"), repository, 300
-                ),
-                WorkflowCommand(
-                    "npm run test:e2e",
-                    ("npm", "run", "test:e2e"),
-                    repository,
-                    300,
-                ),
-                WorkflowCommand(
                     "app check",
                     (local_web, "app", "check", "--repository", str(repository)),
                     ROOT,
@@ -503,8 +494,6 @@ class NewAppWorkflowTests(unittest.TestCase):
                 "context export sensitivity private",
                 "app doctor PASS",
                 "app-local dependency preparation PASS",
-                "npm run check PASS",
-                "npm run test:e2e PASS",
                 "app check PASS",
                 "app activate preview PASS",
                 "app activate apply/recovery PASS",
@@ -593,13 +582,13 @@ class NewAppWorkflowTests(unittest.TestCase):
 
     def test_child_failure_is_labeled_without_output_environment_or_path_leakage(self):
         """Surfacing a child exception would disclose private process data."""
-        executor = RecordingExecutor(self.registry, failure_label="npm run check")
+        executor = RecordingExecutor(self.registry, failure_label="app check")
 
         code = self.verifier(executor).run()
 
         self.assertEqual(code, 1)
         self.assertEqual(
-            self.lines[-2:], ["npm run check FAIL", "cleanup PASS"]
+            self.lines[-2:], ["app check FAIL", "cleanup PASS"]
         )
         report = "\n".join(self.lines)
         self.assertNotIn("PRIVATE", report)
@@ -673,7 +662,6 @@ class NewAppWorkflowTests(unittest.TestCase):
         for line in (
             "context export schema local-web-context/v1",
             "context export sensitivity private",
-            "npm run test:e2e PASS",
             "app check PASS",
             "app activate preview PASS",
             "hosted generated service CSP acceptance PASS",

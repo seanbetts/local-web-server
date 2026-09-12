@@ -157,6 +157,73 @@ test('supports keyboard focus, actions, forms, tooltip, and dialog focus return'
   expect(messages).toEqual([]);
 });
 
+test('uses native focus semantics to skip unusable dialog autofocus candidates', async ({ page }) => {
+  const messages = await openGallery(page);
+  await page.evaluate(() => {
+    const dialog = document.querySelector<HTMLDialogElement>('dialog');
+    const body = dialog?.querySelector<HTMLElement>('.lwp-dialog__body');
+    const existingInput = body?.querySelector<HTMLInputElement>('input');
+    if (!body || !existingInput) throw new Error('gallery dialog fixture is unavailable');
+
+    existingInput.disabled = true;
+    existingInput.removeAttribute('autofocus');
+    existingInput.removeAttribute('data-lwp-autofocus');
+
+    const disabled = document.createElement('input');
+    disabled.autofocus = true;
+    disabled.disabled = true;
+    disabled.setAttribute('aria-label', 'Disabled autofocus');
+
+    const hidden = document.createElement('div');
+    hidden.hidden = true;
+    hidden.innerHTML = '<input autofocus aria-label="Hidden autofocus">';
+
+    const inert = document.createElement('div');
+    inert.inert = true;
+    inert.innerHTML = '<input autofocus aria-label="Inert autofocus">';
+
+    const marker = document.createElement('span');
+    marker.dataset.lwpAutofocus = 'true';
+    marker.textContent = 'Unfocusable marker';
+
+    const fallback = document.createElement('button');
+    fallback.type = 'button';
+    fallback.textContent = 'Browser focus fallback';
+    body.prepend(disabled, hidden, inert, marker);
+    body.append(fallback);
+  });
+
+  const trigger = page.getByRole('button', { name: 'Open dialog' });
+  await trigger.click();
+  await expect(page.getByRole('button', { name: 'Browser focus fallback' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  expect(messages).toEqual([]);
+});
+
+test('keeps a native modal focusable inside an inert app ancestor', async ({ page }) => {
+  const messages = await openGallery(page);
+  const trigger = page.getByRole('button', { name: 'Open dialog' });
+  await trigger.focus();
+  await page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>('.lwp-platform-shell');
+    const opener = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Open dialog');
+    if (!shell || !opener) throw new Error('gallery dialog fixture is unavailable');
+    shell.inert = true;
+    opener.click();
+  });
+
+  await expect(page.getByRole('textbox', { name: 'Dialog note' })).toBeFocused();
+  await page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>('.lwp-platform-shell');
+    if (shell) shell.inert = false;
+  });
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  expect(messages).toEqual([]);
+});
+
 test('sizes the context export action to the full theme control height', async ({ page }) => {
   await openGallery(page);
 
