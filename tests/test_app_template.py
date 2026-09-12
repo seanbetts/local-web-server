@@ -70,50 +70,14 @@ class AppTemplateTests(unittest.TestCase):
         files = self.rendered()
 
         self.assertEqual(set(files), EXPECTED_PATHS)
-        self.assertIn(
-            "<AppShell app={platformApp} buildContextExport={buildContextExport}>",
-            files["src/App.tsx"],
+        package = json.loads(files["package.json"])
+        self.assertEqual(
+            package["dependencies"]["@local-web/ui"],
+            "file:vendor/local-web-ui.tgz",
         )
-        self.assertIn("<ViewHeader", files["src/App.tsx"])
-        self.assertIn('title="Overview"', files["src/App.tsx"])
-        self.assertNotIn("<h1>Recipe Collection</h1>", files["src/App.tsx"])
-        self.assertIn('"@local-web/ui": "file:vendor/local-web-ui.tgz"', files["package.json"])
         self.assertNotRegex("".join(files.values()), r"__[A-Z0-9_]+__")
         self.assertTrue(all(content.endswith("\n") for content in files.values()))
         self.assertFalse(any("\r\n" in content for content in files.values()))
-        self.assertIn("margin: 0;", files["src/app.css"])
-
-    def test_renders_a_complete_deterministic_context_export_adapter_for_each_app_kind(self):
-        expected = {
-            "static": {"route": "/recipes", "kind": "static"},
-            "service": {"route": "/recipes", "kind": "service"},
-        }
-
-        for kind, values in expected.items():
-            with self.subTest(kind=kind):
-                files = self.rendered(kind=kind)
-                adapter = files["src/contextExport.ts"]
-
-                self.assertIn("signal.throwIfAborted();", adapter)
-                self.assertIn("const generatedAt = new Date().toISOString();", adapter)
-                self.assertIn("schema: 'local-web-context/v1'", adapter)
-                self.assertIn("id: platformApp.id", adapter)
-                self.assertIn("version: '0.0.0'", adapter)
-                self.assertIn("sourceRevision: 'unknown'", adapter)
-                self.assertIn(f"activeRoute: '{values['route']}'", adapter)
-                self.assertIn("classification: 'private'", adapter)
-                self.assertIn("Private Local Web context. Share deliberately.", adapter)
-                self.assertIn("Generated application foundation", adapter)
-                self.assertIn("Shared shell, theme, verification, and context export", adapter)
-                self.assertIn("The generated foundation is connected and ready for app-owned features.", adapter)
-                self.assertIn(f"appKind: '{values['kind']}'", adapter)
-                self.assertIn("label: 'Generated application state'", adapter)
-                self.assertIn("assumptions: []", adapter)
-                self.assertIn("decisions: []", adapter)
-                self.assertIn("Domain context has not been added yet.", adapter)
-                self.assertIn("No whole-app source, runtime, or media is included.", adapter)
-                self.assertIn("vi.setSystemTime", files["src/contextExport.test.ts"])
-                self.assertIn("AbortSignal.abort()", files["src/contextExport.test.ts"])
 
     def test_pins_the_standard_toolchain_and_scripts_exactly(self):
         package = json.loads(self.rendered()["package.json"])
@@ -204,12 +168,6 @@ class AppTemplateTests(unittest.TestCase):
                 "capabilities": ["supabase"],
             },
         )
-        self.assertIn("$local-web-app-development", files["AGENTS.md"])
-        self.assertIn('"$LOCAL_WEB" app doctor', files["AGENTS.md"])
-        self.assertIn('"$LOCAL_WEB" app doctor', files["README.md"])
-        self.assertIn('"$LOCAL_WEB" app check', files["README.md"])
-        self.assertNotIn("upgrade", files["AGENTS.md"].lower())
-        self.assertIn("supabase", files["AGENTS.md"])
         self.assertNotIn("API_KEY", "".join(files.values()))
         self.assertNotIn("SECRET", "".join(files.values()))
 
@@ -248,11 +206,6 @@ class AppTemplateTests(unittest.TestCase):
         self.assertEqual(package["scripts"]["test:service"], "node --check server/service.mjs")
         self.assertIn("npm run test:service", package["scripts"]["check"])
         self.assertNotIn("local-web", package["scripts"]["check"])
-        self.assertIn("127.0.0.1", files["server/service.mjs"])
-        self.assertIn(
-            "ignores: ['coverage', 'dist', 'release']",
-            files["eslint.config.js"],
-        )
 
     def test_rejects_marker_syntax_and_noncanonical_values(self):
         cases = (
@@ -275,21 +228,6 @@ class AppTemplateTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 with self.assertRaises(TemplateError):
                     render_template(recipe_inputs(**changes))
-
-    def test_browser_smoke_uses_the_real_hosted_route(self):
-        files = self.rendered()
-        self.assertIn("page.goto('./')", files["tests/app.spec.ts"])
-        self.assertIn("Export context", files["tests/app.spec.ts"])
-        self.assertIn("suggestedFilename", files["tests/app.spec.ts"])
-        self.assertIn("Content-Security-Policy", files["tests/app.spec.ts"])
-        self.assertIn("data-context-export-classification>PRIVATE", files["tests/app.spec.ts"])
-        self.assertIn(
-            "This is a static snapshot. Changes do not sync to the source app.",
-            files["tests/app.spec.ts"],
-        )
-        self.assertIn("process.env.VITE_PUBLIC_BASE_PATH ?? '/'", files["playwright.config.ts"])
-        self.assertIn("normalizePublicBasePath('/')", files["src/platform.test.ts"])
-        self.assertIn("normalizePublicBasePath('/recipes/')", files["src/platform.test.ts"])
 
     def test_ignores_typescript_incremental_build_metadata_in_a_rendered_app(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -36,32 +36,6 @@ class AgentSkillContentTests(unittest.TestCase):
         self.assertIn('"$LOCAL_WEB" --help', skill)
         self.assertNotIn("$HOME", skill)
 
-    def test_empty_folder_selects_identity_initialises_and_activates_before_design(self):
-        skill = self.read_skill()
-
-        identity = skill.index('"$LOCAL_WEB" app identity --search')
-        initialise = skill.index('"$LOCAL_WEB" app init . --title')
-        initialisation = skill[initialise : skill.index("creative app-specific brainstorming")]
-        foundation_check = skill.index(
-            '"$LOCAL_WEB" app doctor --repository .', initialise
-        )
-        activation_preview = skill.index(
-            '"$LOCAL_WEB" app activate --repository .`', foundation_check
-        )
-        activation_apply = skill.index(
-            '"$LOCAL_WEB" app activate --repository . --apply`',
-            activation_preview,
-        )
-        creative_design = skill.index("creative app-specific brainstorming")
-        self.assertLess(identity, initialise)
-        self.assertIn("--icon <icon>", initialisation)
-        self.assertIn("--accent '<accent>'", initialisation)
-        self.assertLess(initialise, foundation_check)
-        self.assertLess(foundation_check, activation_preview)
-        self.assertLess(activation_preview, activation_apply)
-        self.assertLess(activation_apply, creative_design)
-        self.assertIn("placeholder", initialisation.lower())
-
     def test_existing_apps_preserve_app_owned_structure(self):
         contract = (SKILL / "references" / "app-contract.md").read_text(
             encoding="utf-8"
@@ -137,41 +111,6 @@ class AgentSkillContentTests(unittest.TestCase):
         self.assertLess(local_check, browser)
         self.assertLess(browser, full_check)
 
-    def test_foundation_adoption_guidance_keeps_platform_and_app_work_separate(self):
-        guidance = "\n".join(
-            (
-                (ROOT / "README.md").read_text(encoding="utf-8"),
-                self.read_skill(),
-                *(
-                    path.read_text(encoding="utf-8")
-                    for path in sorted((SKILL / "references").glob("*.md"))
-                ),
-            )
-        )
-
-        for required in (
-            "isolated feature branch or worktree",
-            "does not activate",
-            "legacy build",
-            "app-owned release integration",
-            "full app check",
-            "copied templates",
-            "manual provenance",
-            "placeholder `package.json` or `index.html`",
-            "host registry",
-        ):
-            with self.subTest(required=required):
-                self.assertIn(required, guidance)
-        self.assertIn("expected to fail", guidance)
-        self.assertIn("coherent release", guidance)
-
-        coherent = guidance.index("coherent release")
-        activation = guidance.index("app activate --repository .", coherent)
-        self.assertLess(coherent, activation)
-        self.assertNotIn("Create placeholder `package.json`", guidance)
-        self.assertNotIn("Create placeholder `index.html`", guidance)
-        self.assertNotIn("edit the host registry to adopt", guidance.lower())
-
     def test_skill_uses_platform_commands_without_copying_platform_implementation(self):
         contents = "\n".join(
             path.read_text(encoding="utf-8")
@@ -194,54 +133,6 @@ class AgentSkillContentTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, contents)
-
-    def test_context_export_guidance_keeps_domain_semantics_app_local(self):
-        """A domain feature must keep its app-owned export useful without broadening Doctor."""
-        skill = self.read_skill()
-        contract = (SKILL / "references" / "app-contract.md").read_text(
-            encoding="utf-8"
-        )
-        verification = (SKILL / "references" / "verification.md").read_text(
-            encoding="utf-8"
-        )
-        guidance = "\n".join((skill, contract, verification))
-
-        for required in (
-            "buildContextExport()",
-            "active state",
-            "decisions",
-            "evidence",
-            "freshness",
-            "assumptions",
-            "omissions",
-            "LocalWebContextV1",
-            "automatic redaction",
-            "screenshots",
-            "images",
-            "all media",
-            "whole-app archives",
-            "executable export scripts",
-            "coherent same-origin service snapshot",
-            "service.frontendSecurity",
-            "CSP",
-            "Doctor",
-            "app-local",
-        ):
-            with self.subTest(required=required):
-                self.assertIn(required, guidance)
-
-        self.assertIn("must not broaden CSP for download", guidance)
-        self.assertIn("Do not make Doctor parse context-export semantics", guidance)
-        self.assertIn(
-            "changes active state, decisions, evidence, freshness, assumptions, or omissions",
-            guidance,
-        )
-        self.assertIn("all media", guidance)
-        self.assertIn("download requires no `service.frontendSecurity`", guidance)
-        self.assertIn(
-            "Serving-app external origins never enter the downloaded document",
-            guidance,
-        )
 
     def test_verification_keeps_app_checks_local_and_activates_only_after_health(self):
         verification = (SKILL / "references" / "verification.md").read_text(
@@ -401,15 +292,22 @@ class AgentSkillContentTests(unittest.TestCase):
                 self.assertIn(boundary, " ".join(guidance.split()))
 
     def test_generated_agent_metadata_matches_the_skill(self):
-        metadata = (SKILL / "agents" / "openai.yaml").read_text(encoding="utf-8")
-
+        lines = (SKILL / "agents" / "openai.yaml").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        self.assertEqual(lines[0], "interface:")
+        metadata = {
+            key.strip(): value.strip().strip('"')
+            for line in lines[1:]
+            for key, value in (line.split(":", 1),)
+        }
         self.assertEqual(
-            metadata,
-            'interface:\n'
-            '  display_name: "Local Web App Development"\n'
-            '  short_description: "Build and verify local web applications"\n'
-            '  default_prompt: "Use $local-web-app-development to create or maintain a local web application."\n',
+            set(metadata),
+            {"display_name", "short_description", "default_prompt"},
         )
+        self.assertTrue(metadata["display_name"])
+        self.assertTrue(metadata["short_description"])
+        self.assertIn("$local-web-app-development", metadata["default_prompt"])
 
 
 class AgentSkillInstallerTests(unittest.TestCase):

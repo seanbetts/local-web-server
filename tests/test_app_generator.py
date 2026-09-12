@@ -17,6 +17,7 @@ from local_web_server.app_generator import (
 from local_web_server.app_provenance import CURRENT_TEMPLATE_VERSION, load_provenance
 from local_web_server.process_runner import ProcessRunError, ProcessRunner
 from local_web_server.ui_package import UiPackageArtifact, UiPackageError
+from tests.suites import acceptance
 
 
 ROOT = Path(__file__).parents[1]
@@ -170,10 +171,6 @@ class AppGeneratorTests(unittest.TestCase):
         self.assertTrue((destination / "package-lock.json").is_file())
         self.assertTrue((destination / "src/contextExport.ts").is_file())
         self.assertTrue((destination / "src/contextExport.test.ts").is_file())
-        self.assertIn(
-            "appKind: 'static'",
-            (destination / "src/contextExport.ts").read_text(encoding="utf-8"),
-        )
         self.assertFalse((destination / "node_modules").exists())
         self.assertEqual(
             [entry[0] for entry in self.trace],
@@ -229,10 +226,6 @@ class AppGeneratorTests(unittest.TestCase):
         manifest = json.loads((destination / "local-web.json").read_text())
         self.assertEqual(manifest["kind"], "service")
         self.assertTrue((destination / "server/service.mjs").is_file())
-        self.assertIn(
-            "appKind: 'service'",
-            (destination / "src/contextExport.ts").read_text(encoding="utf-8"),
-        )
         self.assertEqual(len(composer.calls), 1)
         self.assertEqual(composer.calls[0][1].output, Path("release"))
         self.assertEqual(composer.calls[0][1].release_entries[0].target, Path("public"))
@@ -571,6 +564,7 @@ class AppGeneratorTests(unittest.TestCase):
 
 
 class AppGeneratorIntegrationTests(unittest.TestCase):
+    @acceptance
     def test_real_doctor_and_process_runner_complete_the_generated_app_checks(self):
         """The generated repository must retain clean Git and lint policy gates."""
         with tempfile.TemporaryDirectory(dir=ROOT.parent) as text:

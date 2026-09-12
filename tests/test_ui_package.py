@@ -21,6 +21,7 @@ from local_web_server.ui_package import (
     UiPackageError,
     build_ui_package,
 )
+from tests.suites import acceptance
 
 
 PUBLIC_DIST_FILES = {
@@ -74,14 +75,25 @@ class UiPackageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
-        self._fixture_version_patch = None
 
     def tearDown(self):
-        if self._fixture_version_patch is not None:
-            self._fixture_version_patch.stop()
         self.temp.cleanup()
 
-    def _repository(self, name: str = "repository", package_version: str = "0.3.0") -> Path:
+    def _repository(
+        self,
+        name: str = "repository",
+        *,
+        package_version: str = CURRENT_UI_PACKAGE_VERSION,
+        historical_metadata: bool = False,
+    ) -> Path:
+        peer_dependencies = {
+            "react": "19.2.8",
+            "react-dom": "19.2.8",
+        }
+        peer_dependencies_metadata = None
+        if not historical_metadata:
+            peer_dependencies["vite"] = "^8.2.0"
+            peer_dependencies_metadata = {"vite": {"optional": True}}
         repository = self.root / name
         package = repository / "packages" / "ui"
         dist = package / "dist"
@@ -102,31 +114,29 @@ class UiPackageTests(unittest.TestCase):
         (package / "src" / "index.ts").write_text("export {};\n", encoding="utf-8")
         (package / "tsconfig.json").write_text("{}\n", encoding="utf-8")
         (package / "vite.config.ts").write_text("export default {};\n", encoding="utf-8")
+        metadata = {
+            "name": "@local-web/ui",
+            "version": package_version,
+            "private": True,
+            "type": "module",
+            "files": ["dist"],
+            "exports": {
+                ".": {
+                    "types": "./dist/index.d.ts",
+                    "import": "./dist/index.js",
+                },
+                "./styles.css": "./dist/styles.css",
+                "./vite": {
+                    "types": "./dist/vite.d.ts",
+                    "import": "./dist/vite.js",
+                },
+            },
+            "peerDependencies": peer_dependencies,
+        }
+        if peer_dependencies_metadata is not None:
+            metadata["peerDependenciesMeta"] = peer_dependencies_metadata
         (package / "package.json").write_text(
-            json.dumps(
-                {
-                    "name": "@local-web/ui",
-                    "version": package_version,
-                    "private": True,
-                    "type": "module",
-                    "files": ["dist"],
-                    "exports": {
-                        ".": {
-                            "types": "./dist/index.d.ts",
-                            "import": "./dist/index.js",
-                        },
-                        "./styles.css": "./dist/styles.css",
-                        "./vite": {
-                            "types": "./dist/vite.d.ts",
-                            "import": "./dist/vite.js",
-                        },
-                    },
-                    "peerDependencies": {
-                        "react": "19.2.8",
-                        "react-dom": "19.2.8",
-                    },
-                }
-            ),
+            json.dumps(metadata),
             encoding="utf-8",
         )
         for name in PUBLIC_DIST_FILES:
@@ -169,14 +179,14 @@ class UiPackageTests(unittest.TestCase):
             cwd=repository,
             check=True,
         )
-        if self._fixture_version_patch is None:
-            self._fixture_version_patch = patch(
-                "local_web_server.ui_package.CURRENT_UI_PACKAGE_VERSION",
-                package_version,
+        if historical_metadata:
+            version_patch = patch.object(
+                ui_package, "CURRENT_UI_PACKAGE_VERSION", package_version
             )
-            self._fixture_version_patch.start()
-            # These synthetic historical metadata fixtures intentionally keep their
-            # pre-Vite peer contract; current metadata is exercised separately above.
+            version_patch.start()
+            self.addCleanup(version_patch.stop)
+            # Preserve explicit compatibility evidence for the pre-Vite peer
+            # contract without making it the default synthetic fixture.
             for name, value in {
                 "_PUBLIC_METADATA_KEYS": frozenset({"name", "version", "private", "type", "exports", "files", "peerDependencies"}),
                 "_PUBLIC_PEERS": {"react": "19.2.8", "react-dom": "19.2.8"},
@@ -185,8 +195,6 @@ class UiPackageTests(unittest.TestCase):
                 fixture_patch = patch.object(ui_package, name, value)
                 fixture_patch.start()
                 self.addCleanup(fixture_patch.stop)
-        else:
-            self.assertEqual(ui_package.CURRENT_UI_PACKAGE_VERSION, package_version)
         return repository
 
     def _build_fixture(self, repository: Path, output: Path, stage_mutator=None):
@@ -211,7 +219,7 @@ class UiPackageTests(unittest.TestCase):
         self.assertEqual(first.path.read_bytes(), second.path.read_bytes())
         self.assertEqual(first.sha256, second.sha256)
         self.assertEqual(first.sha256, hashlib.sha256(first.path.read_bytes()).hexdigest())
-        self.assertEqual(first.version, "0.3.0")
+        self.assertEqual(first.version, CURRENT_UI_PACKAGE_VERSION)
         self.assertEqual(first.path.stat().st_mode & 0o777, 0o644)
 
         with gzip.GzipFile(fileobj=io.BytesIO(first.path.read_bytes()), mode="rb") as compressed:
@@ -244,54 +252,12 @@ class UiPackageTests(unittest.TestCase):
                     self.assertFalse(member.issym() or member.islnk())
                     self.assertFalse(member.name.endswith(".map"))
 
-    def test_real_shared_ui_build_is_packable_twice(self):
-        repository = Path(__file__).parents[1]
-
-        first = build_ui_package(repository, self.root / "first.tgz")
-        second = build_ui_package(repository, self.root / "second.tgz")
-
-        self.assertEqual(first.version, "0.7.0")
-        self.assertEqual(first.sha256, second.sha256)
-        self.assertEqual(first.path.read_bytes(), second.path.read_bytes())
-        with tarfile.open(first.path, "r:gz") as archive:
-            files = {member.name for member in archive.getmembers() if member.isfile()}
-            self.assertEqual(files, {"package/package.json", *(f"package/dist/{name}" for name in PUBLIC_DIST_FILES)})
-            self.assertFalse(any(re.search(r"(?:\.map$|secret|credential|token|\.env|private)", name, re.I) for name in files))
-
-    def test_clean_clone_builds_current_reproducible_release_artifact_on_demand(self):
-        source = Path(__file__).parents[1]
-        clone = self.root / "release-clone"
-        subprocess.run(["git", "clone", "-q", os.fspath(source), os.fspath(clone)], check=True)
-        artifact = clone / "artifacts" / f"local-web-ui-{CURRENT_UI_PACKAGE_VERSION}.tgz"
-
-        self.assertFalse(artifact.exists(), "generated UI packages must not be tracked")
-        built = build_ui_package(clone, artifact)
-        self.assertEqual(built.path, artifact)
-        self.assertEqual(built.version, CURRENT_UI_PACKAGE_VERSION)
-        with tarfile.open(artifact, "r:gz") as archive:
-            files = {member.name for member in archive.getmembers() if member.isfile()}
-            self.assertEqual(files, {"package/package.json", *(f"package/dist/{name}" for name in PUBLIC_DIST_FILES)})
-            self.assertFalse(any(re.search(r"(?:\.map$|secret|credential|token|\.env|private)", name, re.I) for name in files))
-            metadata = archive.extractfile("package/package.json").read()
-            version, canonical = ui_package._canonical_metadata(metadata)
-            self.assertEqual(version, CURRENT_UI_PACKAGE_VERSION)
-            self.assertEqual(metadata, canonical)
-
-        rebuilt = build_ui_package(clone, self.root / "rebuilt-release.tgz")
-        self.assertEqual(artifact.read_bytes(), rebuilt.path.read_bytes())
-        self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), rebuilt.sha256)
-
-    def test_fixture_build_accepts_current_release_artifact_filename(self):
-        repository = self._repository("current-release-filename", package_version="0.7.0")
-        artifact, _ = self._build_fixture(
-            repository,
-            repository / "artifacts" / "local-web-ui-0.7.0.tgz",
-        )
-
-        self.assertEqual(artifact.version, "0.7.0")
-
     def test_fixture_build_accepts_historical_0_3_0_package(self):
-        repository = self._repository("historical-release-filename", package_version="0.3.0")
+        repository = self._repository(
+            "historical-release-filename",
+            package_version="0.3.0",
+            historical_metadata=True,
+        )
         artifact, _ = self._build_fixture(
             repository,
             repository / "artifacts" / "local-web-ui.tgz",
@@ -299,8 +265,14 @@ class UiPackageTests(unittest.TestCase):
 
         self.assertEqual(artifact.version, "0.3.0")
 
+    @acceptance
     def test_real_build_ignores_a_transient_malicious_root_manifest_swap(self):
-        repository = Path(__file__).parents[1]
+        source = Path(__file__).parents[1]
+        repository = self.root / "manifest-swap-clone"
+        subprocess.run(
+            ["git", "clone", "-q", os.fspath(source), os.fspath(repository)],
+            check=True,
+        )
         output = self.root / "isolated.tgz"
         manifest = repository / "package.json"
         original = manifest.read_bytes()
@@ -324,6 +296,7 @@ class UiPackageTests(unittest.TestCase):
         with tarfile.open(artifact.path, mode="r:gz") as archive:
             self.assertNotIn(b"EVIL", archive.extractfile("package/dist/index.js").read())
 
+    @acceptance
     def test_concurrent_real_builds_are_isolated_and_identical(self):
         repository = Path(__file__).parents[1]
         barrier = threading.Barrier(2)
@@ -339,7 +312,12 @@ class UiPackageTests(unittest.TestCase):
         self.assertEqual(artifacts[0].path.read_bytes(), artifacts[1].path.read_bytes())
 
     def test_timeout_kills_delayed_descendant_before_it_can_mutate_staging_dist(self):
-        repository = Path(__file__).parents[1]
+        source = Path(__file__).parents[1]
+        repository = self.root / "timeout-clone"
+        subprocess.run(
+            ["git", "clone", "-q", os.fspath(source), os.fspath(repository)],
+            check=True,
+        )
         marker = self.root / "descendant-ran"
         fake_npm = self.root / "npm"
         fake_npm.write_text(
@@ -443,8 +421,8 @@ class UiPackageTests(unittest.TestCase):
         repository = self._repository()
         metadata = repository / "packages" / "ui" / "package.json"
         duplicate = metadata.read_text(encoding="utf-8").replace(
-            '"version": "0.3.0",',
-            '"version": "0.3.0", "version": "0.4.0",',
+            f'"version": "{CURRENT_UI_PACKAGE_VERSION}",',
+            f'"version": "{CURRENT_UI_PACKAGE_VERSION}", "version": "0.4.0",',
         )
         for payload in (
             duplicate,
@@ -876,8 +854,8 @@ class UiPackageTests(unittest.TestCase):
 
     def test_stage_parent_pin_failure_does_not_leave_a_private_stage(self):
         repository = self._repository("stage-parent-failure")
-        temporary_parent = Path(tempfile.gettempdir()).resolve()
-        before = set(temporary_parent.glob("local-web-ui-build-*"))
+        temporary_parent = self.root / "stage-parent"
+        temporary_parent.mkdir()
         real_pin = ui_package._pin_directory
 
         def fail_only_for_temporary_parent(path):
@@ -885,27 +863,27 @@ class UiPackageTests(unittest.TestCase):
                 raise UiPackageError("UI package validation failed")
             return real_pin(path)
 
-        with patch(
+        with patch("tempfile.tempdir", os.fspath(temporary_parent)), patch(
             "local_web_server.ui_package._pin_directory",
             side_effect=fail_only_for_temporary_parent,
         ), self.assertRaisesRegex(UiPackageError, "UI package validation failed"):
             self._build_fixture(repository, self.root / "stage-parent-failure.tgz")
 
-        self.assertEqual(set(temporary_parent.glob("local-web-ui-build-*")), before)
+        self.assertEqual(list(temporary_parent.iterdir()), [])
 
     def test_path_bearing_stage_write_failure_is_bounded_and_cleans_the_stage(self):
         repository = self._repository("stage-write-failure")
-        temporary_parent = Path(tempfile.gettempdir()).resolve()
-        before = set(temporary_parent.glob("local-web-ui-build-*"))
+        temporary_parent = self.root / "stage-write"
+        temporary_parent.mkdir()
 
-        with patch(
+        with patch("tempfile.tempdir", os.fspath(temporary_parent)), patch(
             "local_web_server.ui_package._write_stage_file",
             side_effect=OSError(f"write failed {_PRIVATE_TEST_PATH}"),
         ), self.assertRaisesRegex(UiPackageError, "UI package validation failed") as caught:
             self._build_fixture(repository, self.root / "stage-write-failure.tgz")
 
         self.assertNotIn(_PRIVATE_TEST_PATH, str(caught.exception))
-        self.assertEqual(set(temporary_parent.glob("local-web-ui-build-*")), before)
+        self.assertEqual(list(temporary_parent.iterdir()), [])
 
     def test_git_replace_ref_cannot_change_the_recorded_head_authority(self):
         repository = self._repository("replace-ref")
@@ -1024,37 +1002,14 @@ class UiPackageTests(unittest.TestCase):
         self.assertNotIn(_PRIVATE_TEST_PATH, str(caught.exception))
         self.assertEqual(len(os.listdir("/dev/fd")) - descriptors_before, 0)
 
-    def test_fresh_clone_without_dist_or_node_modules_can_run_current_pack_scripts(self):
+    @acceptance
+    def test_clean_clone_pack_scripts_build_reproducible_canonical_release(self):
         source = Path(__file__).parents[1]
-        seed = self.root / "fresh-seed"
         clone = self.root / "fresh-clone"
-        subprocess.run(["git", "clone", "-q", os.fspath(source), os.fspath(seed)], check=True)
-        shutil.copy2(source / "package.json", seed / "package.json")
-        shutil.copy2(
-            source / "local_web_server" / "ui_package.py",
-            seed / "local_web_server" / "ui_package.py",
-        )
         subprocess.run(
-            ["git", "add", "package.json", "local_web_server/ui_package.py"],
-            cwd=seed,
+            ["git", "clone", "-q", os.fspath(source), os.fspath(clone)],
             check=True,
         )
-        if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=seed).returncode != 0:
-            subprocess.run(
-                [
-                    "git",
-                    "-c",
-                    "user.name=Task Six Tests",
-                    "-c",
-                    "user.email=task-six@example.invalid",
-                    "commit",
-                    "-qm",
-                    "current UI package builder",
-                ],
-                cwd=seed,
-                check=True,
-            )
-        subprocess.run(["git", "clone", "-q", os.fspath(seed), os.fspath(clone)], check=True)
         self.assertFalse((clone / "packages" / "ui" / "dist").exists())
         self.assertFalse((clone / "node_modules").exists())
 
@@ -1077,7 +1032,8 @@ class UiPackageTests(unittest.TestCase):
             },
         )
 
-        for script, artifact in (
+        artifacts = []
+        for script, artifact_name in (
             ("pack:ui", "local-web-ui.tgz"),
             (
                 expected_versioned_script,
@@ -1101,7 +1057,36 @@ class UiPackageTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stdout)
-            self.assertTrue((clone / "artifacts" / artifact).is_file())
+            artifact = clone / "artifacts" / artifact_name
+            self.assertTrue(artifact.is_file())
+            artifacts.append(artifact)
+
+        self.assertEqual(artifacts[0].read_bytes(), artifacts[1].read_bytes())
+        with tarfile.open(artifacts[0], "r:gz") as archive:
+            files = {
+                member.name for member in archive.getmembers() if member.isfile()
+            }
+            self.assertEqual(
+                files,
+                {
+                    "package/package.json",
+                    *(f"package/dist/{name}" for name in PUBLIC_DIST_FILES),
+                },
+            )
+            self.assertFalse(
+                any(
+                    re.search(
+                        r"(?:\.map$|secret|credential|token|\.env|private)",
+                        name,
+                        re.I,
+                    )
+                    for name in files
+                )
+            )
+            metadata = archive.extractfile("package/package.json").read()
+            version, canonical = ui_package._canonical_metadata(metadata)
+            self.assertEqual(version, CURRENT_UI_PACKAGE_VERSION)
+            self.assertEqual(metadata, canonical)
 
     def test_terminal_capture_preserves_root_child_and_file_replacements(self):
         real_capture = ui_package._native_rename_exclusive

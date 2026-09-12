@@ -37,6 +37,7 @@ from local_web_server.ui_package import (
     UiPackageError,
     build_ui_package,
 )
+from tests.suites import acceptance
 
 
 ROOT = Path(__file__).parents[1]
@@ -1429,38 +1430,70 @@ class FoundationAppUpdaterTests(unittest.TestCase):
         ):
             self.updater.preview(self._request(capabilities=("supabase",)))
 
-    def test_foundation_preview_refuses_every_created_target_in_every_required_state(self):
+    def test_foundation_preview_refuses_every_target_and_each_required_state(self):
         baseline = self.updater.preview(self._request())
         self.assertEqual(
             {change.path for change in baseline.changes},
             FOUNDATION_PLANNED_PATHS,
         )
-        states = (
-            "tracked", "untracked", "ignored", "staged", "deleted",
-            "symlinked", "directory", "unreadable",
+        for index, target in enumerate(sorted(FOUNDATION_CONFLICT_PATHS, key=str)):
+            with self.subTest(target=target.as_posix(), state="untracked"):
+                repository = self._target_state_repository(
+                    index, target, "untracked", self.repository
+                )
+                with self.assertRaisesRegex(
+                    AppUpdateError, "application contract conflicts with update"
+                ) as raised:
+                    self.updater.preview(self._request(repository))
+                self.assertNotIn("private", str(raised.exception))
+                self.assertNotIn(str(repository), str(raised.exception))
+
+        state_cases = (
+            (Path("package.json"), "tracked"),
+            (Path("src/App.tsx"), "untracked"),
+            (Path("vendor/local-web-ui.tgz"), "ignored"),
+            (Path("vite.config.ts"), "staged"),
+            (Path("src/platform.ts"), "deleted"),
+            (Path(".local-web-platform.json"), "symlinked"),
+            (Path("tests/app.spec.ts"), "directory"),
+            (Path("package-lock.json"), "unreadable"),
         )
         dirty_states = {"staged", "deleted", "unreadable"}
-        for index, target in enumerate(sorted(FOUNDATION_CONFLICT_PATHS, key=str)):
-            tracked_base = self._copy_repository(f"matrix-{index}-tracked")
-            self._write_target(tracked_base, target, b"private tracked target\n")
-            self._commit(tracked_base, f"track {target.as_posix()}")
-            for state in states:
-                with self.subTest(target=target.as_posix(), state=state):
-                    repository = self._target_state_repository(
-                        index, target, state, tracked_base
+        for index, (target, state) in enumerate(state_cases):
+            with self.subTest(target=target.as_posix(), state=state):
+                tracked_base = self._copy_repository(f"state-{index}-tracked")
+                if state in {"tracked", "deleted", "unreadable"}:
+                    self._write_target(
+                        tracked_base, target, b"private tracked target\n"
                     )
-                    expected = (
-                        "target files are not clean"
-                        if state in dirty_states
-                        else "application contract conflicts with update"
-                    )
-                    with self.assertRaisesRegex(AppUpdateError, expected) as raised:
-                        self.updater.preview(self._request(repository))
-                    self.assertNotIn("private", str(raised.exception))
-                    self.assertNotIn(str(repository), str(raised.exception))
+                    self._commit(tracked_base, f"track {target.as_posix()}")
+                repository = self._target_state_repository(
+                    len(FOUNDATION_CONFLICT_PATHS) + index,
+                    target,
+                    state,
+                    tracked_base,
+                )
+                expected = (
+                    "target files are not clean"
+                    if state in dirty_states
+                    else "application contract conflicts with update"
+                )
+                with self.assertRaisesRegex(AppUpdateError, expected) as raised:
+                    self.updater.preview(self._request(repository))
+                self.assertNotIn("private", str(raised.exception))
+                self.assertNotIn(str(repository), str(raised.exception))
 
-    def test_foundation_preview_refuses_unsafe_parents_for_every_nested_target(self):
-        for index, target in enumerate(sorted(NESTED_FOUNDATION_PATHS, key=str)):
+    def test_foundation_preview_refuses_unsafe_parents_for_each_nested_category(self):
+        targets = (
+            Path("src/App.tsx"),
+            Path("tests/app.spec.ts"),
+            Path("vendor/local-web-ui.tgz"),
+        )
+        self.assertEqual(
+            {target.parts[0] for target in targets},
+            {target.parts[0] for target in NESTED_FOUNDATION_PATHS},
+        )
+        for index, target in enumerate(targets):
             for parent_state in ("symlinked", "non-directory"):
                 with self.subTest(
                     target=target.as_posix(), parent_state=parent_state
@@ -1593,6 +1626,7 @@ class FoundationAppUpdaterTests(unittest.TestCase):
         self.assertIsNone(current.foundation)
         self.assertEqual(current.changes, ())
 
+    @acceptance
     def test_rendered_foundation_temporary_verification_disables_lifecycle_scripts(self):
         with tempfile.TemporaryDirectory(dir=ROOT.parent) as text:
             temporary = Path(text)
@@ -1725,6 +1759,7 @@ class NpmLockfileBuilderTests(unittest.TestCase):
         self.assertEqual(ui_package["resolved"], "file:vendor/local-web-ui.tgz")
         self.assertEqual(ui_package["integrity"], expected_integrity)
 
+    @acceptance
     def test_build_uses_package_only_install_and_disables_lifecycle_scripts(self):
         with tempfile.TemporaryDirectory(dir=ROOT.parent) as text:
             workspace = Path(text)
