@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -295,18 +297,23 @@ class AgentSkillContentTests(unittest.TestCase):
         lines = (SKILL / "agents" / "openai.yaml").read_text(
             encoding="utf-8"
         ).splitlines()
+        self.assertEqual(len(lines), 4)
         self.assertEqual(lines[0], "interface:")
-        metadata = {
-            key.strip(): value.strip().strip('"')
-            for line in lines[1:]
-            for key, value in (line.split(":", 1),)
-        }
+        metadata = {}
+        for line in lines[1:]:
+            match = re.fullmatch(
+                r'  ([a-z][a-z0-9_]*): ("(?:[^"\\]|\\.)*")', line
+            )
+            self.assertIsNotNone(match, f"invalid agent metadata line: {line!r}")
+            key, encoded_value = match.groups()
+            self.assertNotIn(key, metadata)
+            value = json.loads(encoded_value)
+            self.assertTrue(value)
+            metadata[key] = value
         self.assertEqual(
             set(metadata),
             {"display_name", "short_description", "default_prompt"},
         )
-        self.assertTrue(metadata["display_name"])
-        self.assertTrue(metadata["short_description"])
         self.assertIn("$local-web-app-development", metadata["default_prompt"])
 
 
