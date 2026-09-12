@@ -161,7 +161,12 @@ def _discover_suite() -> unittest.TestSuite | None:
 def _owned_test_tmpdir():
     previous_environment = os.environ.get("TMPDIR")
     previous_tempdir = tempfile.tempdir
-    owner = tempfile.TemporaryDirectory(prefix="local-web-python-tests-")
+    # macOS's default TMPDIR is already long; nested Unix socket fixtures have
+    # a 104-byte address limit. mkdtemp still creates an owned private directory.
+    owner = tempfile.TemporaryDirectory(
+        prefix="local-web-python-tests-",
+        dir="/tmp" if sys.platform == "darwin" else None,
+    )
     private_tmpdir = Path(owner.name) / "tmp"
     private_tmpdir.mkdir(mode=0o700)
     private_tmpdir.chmod(0o700)

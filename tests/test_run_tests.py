@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import socket
 from pathlib import Path
 import tempfile
 import unittest
@@ -37,6 +38,15 @@ class RunTestsTests(unittest.TestCase):
 
                     self.assertEqual(result, 1)
                     self.assertIn("test_broken_import", errors.getvalue())
+
+    @unittest.skipUnless(hasattr(socket, "AF_UNIX"), "requires Unix sockets")
+    def test_owned_tmpdir_supports_nested_unix_socket_fixtures(self):
+        with run_tests._owned_test_tmpdir():
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "repository" / "docs" / "architecture.md"
+                path.parent.mkdir(parents=True)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                    listener.bind(str(path))
 
     def test_partition_preserves_discovery_and_selects_class_and_method_markers(self):
         class ExampleTests(unittest.TestCase):
