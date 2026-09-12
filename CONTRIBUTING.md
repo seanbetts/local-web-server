@@ -20,34 +20,75 @@ Install JavaScript dependencies without lifecycle scripts:
 npm ci --ignore-scripts
 ```
 
-## Core checks
+## Choosing checks
 
-Run the focused tests for the code you changed, then the complete relevant
-matrix. The portable baseline is:
+For routine changes, run the focused tests for the code you changed, then:
 
 ```sh
-PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v
+PYTHONWARNINGS=error::ResourceWarning npm run check
+```
+
+This runs the fast Python group and the frontend type, consumer, unit, and
+build checks. The Python runner prints selected and excluded counts and the
+slowest tests. Its temporary directory is private to the invocation.
+
+Before merging framework changes, run the complete gate:
+
+```sh
+LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run check:all
 python3 -m compileall -q local_web_server scripts tests
-npm run check:ui
-npm run check:ui:consumer
-npm run test:ui -- --run
-npm run build:ui
-npm run check:index
-npm run build:gallery
-npm run test:gallery -- --run
 npm run verify:public-release
 npm audit
 npm audit --omit=dev
 git diff --check
 ```
 
-Rendered changes also require the applicable Playwright suites:
+`check:all` includes every Python test and the real browser suites. It builds
+the shared UI once for the frontend checks. Caddy must be installed when
+`LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1` is set. The public CI also runs the
+disposable host-profile workflow separately.
+
+The groups can be selected or inspected independently:
 
 ```sh
-npm run test:index:e2e
-npm run test:gallery:e2e
-npm run test:interactive-export:e2e
+npm run test:python
+npm run test:python:acceptance
+npm run test:python:all
+python3 scripts/run_tests.py --suite acceptance --list
+npm run check:frontend
+npm run check:frontend:browser
 ```
+
+Fast and acceptance are disjoint groups whose union is the complete Python
+suite. Tests marked with `@acceptance` retain real package builds, disposable
+workflow execution, and process cleanup checks. Ordinary unittest discovery
+still runs everything, including acceptance:
+
+```sh
+PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v
+```
+
+Standalone commands such as `check:index`, `check:ui:consumer`, and
+`test:index:e2e` prepare their own prerequisites. Commands ending in
+`:prepared` are internal composition steps and require the preceding builds.
+
+| Change | Focused coverage |
+| --- | --- |
+| Python policy, file preservation, profiles, or recovery | Relevant `python3 -m unittest tests.test_<module> -v`; then the full Python group for framework integration |
+| Workflow phases, failure labels, or ordering | Lightweight workflow matrices; retain real acceptance for distinct resource and recovery states |
+| UI package contents or generation | Package/generator unit tests plus their marked real-build acceptance |
+| Shared UI behavior | `npm run test:ui -- --run` and `npm run check:ui:consumer` |
+| Native dialog focus or keyboard behavior | `npm run test:gallery:e2e` |
+| System Index layout or persistence | `npm run check:index` and `npm run test:index:e2e` |
+| Export payload decoding | `npm run test:interactive-export` |
+| Download, offline export, or CSP behavior | `npm run test:interactive-export:e2e` |
+
+Keep assertions at the cheapest layer that can prove the behavior. Use unit
+matrices for policy combinations and browser tests for native browser behavior.
+Retain representative real toolchain and recovery tests; do not multiply a full
+build across cases that differ only in a mocked phase or error label. Add a test
+when it protects an observable contract or regression, rather than pinning
+incidental prose or implementation spelling.
 
 ## Disposable framework workflows
 

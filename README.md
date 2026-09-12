@@ -376,33 +376,24 @@ ingress diagnosis, machine restoration, and live readback expectations.
 
 ## Verification
 
-Framework verification is disposable by default:
+Framework verification is disposable by default. The routine gate runs fast
+Python tests and frontend checks; the full gate adds real workflow acceptance
+and browser coverage:
 
 ```sh
-PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v
-python3 -m compileall -q local_web_server scripts tests
-npm run check:ui
-npm run check:ui:consumer
-npm run test:ui -- --run
-npm run build:ui
-npm run check:index
-npm run test:index:e2e
-npm run build:gallery
-npm run test:gallery -- --run
-npm run test:gallery:e2e
-npm run test:interactive-export:e2e
+PYTHONWARNINGS=error::ResourceWarning npm run check
+LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run check:all
 npm run verify:host-profile
-npm run verify:new-app
-npm run verify:new-service-app
-npm run verify:foundation-adoption
-npm run verify:repository-service-transition
-npm run verify:service-command-migration
-npm run verify:public-base-path-migration
-npm run verify:fleet-update
 npm run verify:public-release
 npm audit
 npm audit --omit=dev
 ```
+
+Use `npm run test:python:acceptance` for the real Python integration group, or
+`python3 scripts/run_tests.py --suite acceptance --list` to see its membership.
+The runner reports exclusions explicitly; ordinary unittest discovery still
+runs the complete suite. See [Choosing checks](CONTRIBUTING.md#choosing-checks)
+for focused commands, prerequisites, and coverage ownership.
 
 The host-profile workflow uses temporary repositories/runtime state and real
 Caddy validation when available. No disposable pass proves a live host, remote,
