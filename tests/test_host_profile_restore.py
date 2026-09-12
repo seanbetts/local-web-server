@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from local_web_server.host_profile_store import HostProfileSnapshot, HostProfileStore, parse_revision
 from tests.test_host_profile_store import StoreFixture, BEFORE, AFTER, CLOCK, envelope, digest
+from tests.suites import acceptance
 
 
 macos_restore = unittest.skipUnless(sys.platform == "darwin", "requires macOS descriptor-clone restore publication")
@@ -45,6 +46,7 @@ class RestoreStoreTests(StoreFixture):
         self.assertEqual(self.store.revisions(), candidate.revisions)
         self.assertFalse(self.paths.transaction.exists())
 
+    @acceptance
     @macos_restore
     def test_restore_supports_ten_thousand_revisions_and_a_five_mib_profile(self):
         candidate = self.boundary_candidate()

@@ -393,7 +393,10 @@ Use `npm run test:python:acceptance` for the real Python integration group, or
 `python3 scripts/run_tests.py --suite acceptance --list` to see its membership.
 The runner reports exclusions explicitly; ordinary unittest discovery still
 runs the complete suite. See [Choosing checks](CONTRIBUTING.md#choosing-checks)
-for focused commands, prerequisites, and coverage ownership.
+for focused commands, prerequisites, and coverage ownership. Run the matching
+[disposable workflow](CONTRIBUTING.md#disposable-framework-workflows) when its
+lifecycle contract changes; the automated suite gate does not invoke every
+standalone workflow.
 
 The host-profile workflow uses temporary repositories/runtime state and real
 Caddy validation when available. No disposable pass proves a live host, remote,

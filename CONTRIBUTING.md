@@ -32,7 +32,7 @@ This runs the fast Python group and the frontend type, consumer, unit, and
 build checks. The Python runner prints selected and excluded counts and the
 slowest tests. Its temporary directory is private to the invocation.
 
-Before merging framework changes, run the complete gate:
+Before merging framework changes, run all automated test suites:
 
 ```sh
 LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run check:all
@@ -43,7 +43,8 @@ npm audit --omit=dev
 git diff --check
 ```
 
-`check:all` includes every Python test and the real browser suites. It builds
+`check:all` includes every Python test and the real browser suites. It does
+not invoke every standalone disposable workflow listed below. It builds
 the shared UI once for the frontend checks. Caddy must be installed when
 `LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1` is set. The public CI also runs the
 disposable host-profile workflow separately.
@@ -61,7 +62,7 @@ npm run check:frontend:browser
 
 Fast and acceptance are disjoint groups whose union is the complete Python
 suite. Tests marked with `@acceptance` retain real package builds, disposable
-workflow execution, and process cleanup checks. Ordinary unittest discovery
+workflow execution, process cleanup checks, and the full-size profile restore. Ordinary unittest discovery
 still runs everything, including acceptance:
 
 ```sh
@@ -91,6 +92,24 @@ when it protects an observable contract or regression, rather than pinning
 incidental prose or implementation spelling.
 
 ## Disposable framework workflows
+
+Run the matching workflow when changing its implementation or the contracts it
+exercises. These commands prove integration that the unit tests' injected
+executors cannot establish; `check:all` does not replace them:
+
+| Changed contract | Required disposable workflow |
+| --- | --- |
+| Generated app lifecycle or template | `verify:new-app` and `verify:new-service-app` |
+| Host profiles, restore, or generated Caddy configuration | `verify:host-profile` |
+| Foundation adoption | `verify:foundation-adoption` |
+| Repository-backed service transition | `verify:repository-service-transition` |
+| Service command migration | `verify:service-command-migration` |
+| Public base path migration | `verify:public-base-path-migration` |
+| Fleet update orchestration | `verify:fleet-update` |
+
+The foundation, public-base-path, and fleet workflow modules already retain real
+acceptance within the full Python suite. When that run exercises the changed
+workflow, use its evidence rather than repeating the same workflow standalone.
 
 These commands create temporary repositories and private profiles. They must
 not read or modify the checkout's real `config/local/` state:
