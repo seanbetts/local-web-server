@@ -1165,6 +1165,13 @@ class FoundationAppUpdaterTests(unittest.TestCase):
             check=True,
             capture_output=True,
         )
+        # Detached maintenance can remove its lock while copytree clones fixtures.
+        subprocess.run(
+            ("git", "config", "--local", "maintenance.auto", "false"),
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
         self._commit(repository, "samplealpha service")
         return repository
 
@@ -1297,6 +1304,16 @@ class FoundationAppUpdaterTests(unittest.TestCase):
             capabilities=capabilities,
             foundation="react-vite",
         )
+
+    def test_fixture_disables_automatic_git_maintenance(self):
+        configured = subprocess.run(
+            ("git", "config", "--local", "--get", "maintenance.auto"),
+            cwd=self.repository,
+            check=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(configured.stdout, b"false\n")
 
     def test_foundation_request_reads_manifest_before_missing_frontend_files(self):
         plan = self.updater.preview(self._request())
