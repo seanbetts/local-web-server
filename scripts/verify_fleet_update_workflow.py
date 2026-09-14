@@ -8,6 +8,7 @@ import hashlib
 import io
 import os
 import gzip
+import http.client
 import selectors
 import shutil
 import signal
@@ -17,8 +18,6 @@ import sys
 import tarfile
 import tempfile
 import time
-import urllib.request
-import urllib.error
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,7 +65,7 @@ EXPECTED_PHASES = (
 _MAX_OUTPUT = 4096
 _TIMEOUT = 0.2
 _CHECK_PORT = 43129
-_SERVICE_START_TIMEOUT_SECONDS = 30.0
+_SERVICE_START_TIMEOUT_SECONDS = 10.0
 _PRIVATE_MARKER = "PRIVATE-FLEET-WORKFLOW-DETAIL"
 _LAST_PROBE_PROCESS_GROUP: int | None = None
 _LAST_PROBE_DESCENDANT: int | None = None
@@ -370,7 +369,7 @@ class _PrivateHttpService:
                     raise RuntimeError(_PRIVATE_MARKER)
                 try:
                     self._check_port(identity, port)
-                except (OSError, urllib.error.URLError):
+                except (OSError, http.client.HTTPException):
                     continue
                 self.process = process
                 self.port = port
@@ -394,11 +393,14 @@ class _PrivateHttpService:
 
     @staticmethod
     def _check_port(identity: _CheckedService, port: int) -> None:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}{identity.health_path}", timeout=1
-        ) as response:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+        try:
+            connection.request("GET", identity.health_path)
+            response = connection.getresponse()
             if response.status != 204:
                 raise RuntimeError(_PRIVATE_MARKER)
+        finally:
+            connection.close()
 
     def close(self) -> None:
         if self.process is None:

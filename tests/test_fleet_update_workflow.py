@@ -4,7 +4,9 @@ import io
 import os
 import stat
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -385,3 +387,35 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                 self.assertIsNone(service.process_group)
             finally:
                 service.close()
+
+    def test_disposable_service_health_bypasses_ambient_url_openers(self):
+        import scripts.verify_fleet_update_workflow as verifier
+
+        class Health(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(204 if self.path == "/healthz" else 404)
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Health)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        identity = verifier._CheckedService(
+            (), (), Path.cwd(), "/healthz", verifier._CHECK_PORT
+        )
+        try:
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=AssertionError("ambient URL opener was used"),
+            ):
+                verifier._PrivateHttpService._check_port(
+                    identity, server.server_address[1]
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
+
+        self.assertFalse(thread.is_alive())
