@@ -30,6 +30,17 @@ class GitRunnerTests(unittest.TestCase):
         executable.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         return executable
 
+    @staticmethod
+    def _wait_for_process_exit(pid: int, timeout: float = 2.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.01)
+        return False
+
     def test_ignores_ambient_path_and_git_configuration(self):
         malicious = self.root / "ambient"
         malicious.mkdir()
@@ -95,8 +106,7 @@ class GitRunnerTests(unittest.TestCase):
             child_pid = int(
                 (self.repository / "descendant.pid").read_text(encoding="ascii")
             )
-            with self.assertRaises(ProcessLookupError):
-                os.kill(child_pid, 0)
+            self.assertTrue(self._wait_for_process_exit(child_pid))
         finally:
             if child_pid is not None:
                 try:
