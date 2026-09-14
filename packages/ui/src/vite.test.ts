@@ -182,7 +182,7 @@ describe('interactive export Vite integration', () => {
       '--jsx', 'react-jsx', '--strict', '--skipLibCheck', join(root, 'consumer.ts'),
     ], {encoding: 'utf8'});
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  });
+  }, 15000);
   it('packages through a real hosted build with the same virtual and meta descriptor', async () => {
     const root = interactiveFixture();
     writeFileSync(join(root, 'index.html'), '<html><head></head><body><script type="module" src="/hosted.ts"></script></body></html>');

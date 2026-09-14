@@ -66,7 +66,7 @@
         },
         {
           "name": "Run the complete Python suite",
-          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v"
+          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python:all"
         },
         {
           "name": "Run the disposable host-profile workflow",

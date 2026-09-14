@@ -518,10 +518,10 @@ class PublicBasePathMigrationWorkflowTests(unittest.TestCase):
                 {"groups": [], "version": 1},
             )
             if owned_listener:
-                self.assertEqual(
-                    listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN),
-                    1,
-                )
+                # A TCP handshake is portable across supported macOS runners;
+                # SO_ACCEPTCONN is not implemented by every hosted kernel.
+                with socket.create_connection(listener.getsockname(), timeout=1):
+                    pass
         finally:
             if owned_listener:
                 listener.close()

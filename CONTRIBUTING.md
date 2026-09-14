@@ -134,8 +134,10 @@ The public workflow runs for pull requests and explicit manual dispatches. It
 has only `contents: read` permission, does not retain checkout credentials, and
 does not consume repository secrets or run on push or deployment events.
 
-macOS 15 runs the complete Python 3.14 suite because the framework's filesystem
-and lifecycle contracts use macOS primitives. The job installs the locked Node
+macOS 15 runs the complete Python 3.14 suite through the repository's suite
+runner because the framework's filesystem and lifecycle contracts use macOS
+primitives. The runner owns a short temporary path for Unix sockets and prints
+per-test timing without changing the test set. The job installs the locked Node
 dependencies without lifecycle scripts, Chromium, and Caddy 2 before running
 the suite and the disposable host-profile workflow. Its private profile,
 revision, backup, rendered Caddy configuration, and runtime fixtures remain

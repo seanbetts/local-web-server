@@ -1524,8 +1524,8 @@ class PublicCiWorkflowTests(unittest.TestCase):
                 "python3 -m compileall -q local_web_server scripts tests",
                 (
                     "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 "
-                    "PYTHONWARNINGS=error::ResourceWarning python3 -m unittest "
-                    "discover -s tests -v"
+                    "PYTHONWARNINGS=error::ResourceWarning "
+                    "npm run test:python:all"
                 ),
                 "python3 scripts/verify_host_profile_workflow.py",
             ),
