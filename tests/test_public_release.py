@@ -1518,6 +1518,8 @@ class PublicCiWorkflowTests(unittest.TestCase):
             _workflow_runs(self.jobs["python"]),
             (
                 "npm ci --ignore-scripts",
+                "/opt/homebrew/bin/npm install --global npm@11.19.0 --ignore-scripts",
+                "/opt/homebrew/bin/npm --version | grep -Fx '11.19.0'",
                 "npx playwright install chromium",
                 "brew install caddy",
                 "caddy version | grep -E '^v2[.]'",

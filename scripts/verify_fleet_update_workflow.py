@@ -66,6 +66,7 @@ EXPECTED_PHASES = (
 _MAX_OUTPUT = 4096
 _TIMEOUT = 0.2
 _CHECK_PORT = 43129
+_SERVICE_START_TIMEOUT_SECONDS = 5.0
 _PRIVATE_MARKER = "PRIVATE-FLEET-WORKFLOW-DETAIL"
 _LAST_PROBE_PROCESS_GROUP: int | None = None
 _LAST_PROBE_DESCENDANT: int | None = None
@@ -358,7 +359,7 @@ class _PrivateHttpService:
                 raise RuntimeError(_PRIVATE_MARKER)
             selector.register(process.stdout, selectors.EVENT_READ)
             selector.register(process.stderr, selectors.EVENT_READ)
-            deadline = time.monotonic() + 2
+            deadline = time.monotonic() + _SERVICE_START_TIMEOUT_SECONDS
             output = bytearray()
             while time.monotonic() < deadline:
                 for key, _event in selector.select(0.05):
@@ -367,13 +368,13 @@ class _PrivateHttpService:
                         raise RuntimeError(_PRIVATE_MARKER)
                 if process.poll() is not None:
                     raise RuntimeError(_PRIVATE_MARKER)
+                try:
+                    self._check_port(identity, port)
+                except (OSError, urllib.error.URLError):
+                    continue
                 self.process = process
                 self.port = port
                 self._identity = identity
-                try:
-                    self.check(identity)
-                except (OSError, urllib.error.URLError):
-                    continue
                 return
             raise RuntimeError(_PRIVATE_MARKER)
         except BaseException:
@@ -389,8 +390,12 @@ class _PrivateHttpService:
     def check(self, identity: _CheckedService) -> None:
         if self.port is None or self._identity != identity:
             raise RuntimeError(_PRIVATE_MARKER)
+        self._check_port(identity, self.port)
+
+    @staticmethod
+    def _check_port(identity: _CheckedService, port: int) -> None:
         with urllib.request.urlopen(
-            f"http://127.0.0.1:{self.port}{identity.health_path}", timeout=1
+            f"http://127.0.0.1:{port}{identity.health_path}", timeout=1
         ) as response:
             if response.status != 204:
                 raise RuntimeError(_PRIVATE_MARKER)

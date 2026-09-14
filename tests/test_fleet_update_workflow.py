@@ -295,3 +295,93 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                     fleet.activator.activate(service)  # type: ignore[union-attr]
             finally:
                 fleet.close()
+
+    def test_disposable_service_allows_bounded_delayed_readiness(self):
+        import scripts.verify_fleet_update_workflow as verifier
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            program = root / "service.py"
+            program.write_text(
+                "import argparse\n"
+                "import time\n"
+                "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+                "parser = argparse.ArgumentParser()\n"
+                "parser.add_argument('--port', type=int, required=True)\n"
+                "port = parser.parse_args().port\n"
+                "time.sleep(2.2)\n"
+                "class Health(BaseHTTPRequestHandler):\n"
+                " def do_GET(self):\n"
+                "  self.send_response(204 if self.path == '/healthz' else 404)\n"
+                "  self.end_headers()\n"
+                " def log_message(self, *args): pass\n"
+                "ThreadingHTTPServer(('127.0.0.1', port), Health).serve_forever()\n",
+                encoding="utf-8",
+            )
+            command = (
+                "/usr/bin/env", "python3", str(program), "--port", "{port}"
+            )
+            identity = verifier._CheckedService(
+                command,
+                verifier.expand_service_command_template(
+                    command,
+                    port=verifier._CHECK_PORT,
+                    release=root,
+                    repository=root,
+                ),
+                root,
+                "/healthz",
+                verifier._CHECK_PORT,
+            )
+            service = verifier._PrivateHttpService()
+            failure = None
+            try:
+                service.ensure_running(identity, root)
+            except RuntimeError as error:
+                failure = error
+            finally:
+                service.close()
+
+        self.assertIsNone(failure)
+
+    def test_failed_disposable_service_start_retains_no_candidate_state(self):
+        import scripts.verify_fleet_update_workflow as verifier
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            command = (
+                "/usr/bin/env",
+                "python3",
+                "-c",
+                "import time; time.sleep(60)",
+                "{port}",
+            )
+            identity = verifier._CheckedService(
+                command,
+                verifier.expand_service_command_template(
+                    command,
+                    port=verifier._CHECK_PORT,
+                    release=root,
+                    repository=root,
+                ),
+                root,
+                "/healthz",
+                verifier._CHECK_PORT,
+            )
+            service = verifier._PrivateHttpService()
+            try:
+                with (
+                    patch.object(
+                        verifier, "_SERVICE_START_TIMEOUT_SECONDS", 0.5
+                    ),
+                    self.assertRaises(RuntimeError),
+                ):
+                    service.ensure_running(identity, root)
+
+                self.assertEqual(
+                    (service.process, service.port, service._identity),
+                    (None, None, None),
+                )
+                self.assertIsNone(service.process_group)
+            finally:
+                service.close()
