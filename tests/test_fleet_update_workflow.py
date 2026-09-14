@@ -309,7 +309,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                 "parser = argparse.ArgumentParser()\n"
                 "parser.add_argument('--port', type=int, required=True)\n"
                 "port = parser.parse_args().port\n"
-                "time.sleep(2.2)\n"
+                "time.sleep(5.2)\n"
                 "class Health(BaseHTTPRequestHandler):\n"
                 " def do_GET(self):\n"
                 "  self.send_response(204 if self.path == '/healthz' else 404)\n"
