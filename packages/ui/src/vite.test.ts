@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -156,12 +156,19 @@ describe('interactive export Vite integration', () => {
     const compilerPath = '../../../node_modules/typescript/bin/tsc';
     const configPath = '../vite.config.ts';
     const tsconfigPath = '../tsconfig.json';
-    const distPath = '../dist';
+    const packageDist = join(root, 'package/dist');
     const modulesPath = '../../../node_modules';
-    await build({configFile:new URL(configPath, import.meta.url).pathname, logLevel:'silent'});
-    execFileSync(process.execPath, [new URL(compilerPath, import.meta.url).pathname, '--project', new URL(tsconfigPath, import.meta.url).pathname, '--emitDeclarationOnly']);
-    mkdirSync(join(root, 'package'));
-    cpSync(new URL(distPath, import.meta.url), join(root, 'package/dist'), {recursive:true});
+    // Keep the caller's prepared production package intact for downstream checks.
+    await build({
+      configFile: new URL(configPath, import.meta.url).pathname,
+      logLevel: 'silent',
+      build: { outDir: packageDist },
+    });
+    execFileSync(process.execPath, [
+      new URL(compilerPath, import.meta.url).pathname,
+      '--project', new URL(tsconfigPath, import.meta.url).pathname,
+      '--emitDeclarationOnly', '--outDir', packageDist,
+    ]);
     symlinkSync(new URL(modulesPath, import.meta.url).pathname, join(root, 'node_modules'), 'dir');
     writeFileSync(join(root, 'consumer.ts'), `import type {} from './package/dist/vite.js';
       import descriptor from 'virtual:local-web-interactive-export';
