@@ -1527,7 +1527,12 @@ class PublicCiWorkflowTests(unittest.TestCase):
                 (
                     "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 "
                     "PYTHONWARNINGS=error::ResourceWarning "
-                    "npm run test:python:all"
+                    "npm run test:python"
+                ),
+                (
+                    "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 "
+                    "PYTHONWARNINGS=error::ResourceWarning "
+                    "npm run test:python:acceptance"
                 ),
                 "python3 scripts/verify_host_profile_workflow.py",
             ),

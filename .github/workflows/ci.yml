@@ -73,8 +73,12 @@
           "run": "python3 -m compileall -q local_web_server scripts tests"
         },
         {
-          "name": "Run the complete Python suite",
-          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python:all"
+          "name": "Run the fast Python suite",
+          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python"
+        },
+        {
+          "name": "Run the Python acceptance suite",
+          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python:acceptance"
         },
         {
           "name": "Run the disposable host-profile workflow",

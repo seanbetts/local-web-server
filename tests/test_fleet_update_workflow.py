@@ -298,6 +298,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
             finally:
                 fleet.close()
 
+    @acceptance
     def test_disposable_service_allows_bounded_delayed_readiness(self):
         import scripts.verify_fleet_update_workflow as verifier
 
@@ -346,6 +347,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
 
         self.assertIsNone(failure)
 
+    @acceptance
     def test_failed_disposable_service_start_retains_no_candidate_state(self):
         import scripts.verify_fleet_update_workflow as verifier
 
@@ -388,6 +390,7 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
             finally:
                 service.close()
 
+    @acceptance
     def test_disposable_service_health_bypasses_ambient_url_openers(self):
         import scripts.verify_fleet_update_workflow as verifier
 
