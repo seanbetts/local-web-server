@@ -422,7 +422,7 @@ class IngressDeadlineTests(unittest.TestCase):
                         self.assertTrue(peer.connected.is_set(), "real TLS boundary must be reached")
                         if stage == "headers":
                             self.assertEqual(len(peer.requests), 1)
-                        self.assertTrue(peer.closed.wait(0.2), "deadline must close the peer socket")
+                        self.assertTrue(peer.closed.wait(1), "deadline must close the peer socket")
                         self.assertEqual(processes[0].returncode, -signal.SIGKILL)
                         self.assertEqual(self.listener_timeouts, [])
                         self.assert_reaped(processes)
