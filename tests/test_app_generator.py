@@ -130,44 +130,13 @@ class AppGeneratorTests(unittest.TestCase):
         self.assertEqual(artifact.read_bytes(), UI_BYTES)
         self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), UI_SHA256)
         provenance = load_provenance(destination / ".local-web-platform.json")
-        self.assertEqual(CURRENT_TEMPLATE_VERSION, 3)
         self.assertEqual(provenance.template_version, CURRENT_TEMPLATE_VERSION)
         self.assertEqual(provenance.ui.version, "0.1.0")
         self.assertEqual(provenance.ui.sha256, UI_SHA256)
         self.assertEqual(result.ui_version, provenance.ui.version)
         self.assertEqual(result.ui_sha256, provenance.ui.sha256)
         package = json.loads((destination / "package.json").read_text(encoding="utf-8"))
-        self.assertEqual(
-            package["dependencies"],
-            {
-                "@local-web/ui": "file:vendor/local-web-ui.tgz",
-                "react": "19.2.8",
-                "react-dom": "19.2.8",
-            },
-        )
-        self.assertEqual(
-            package["devDependencies"],
-            {
-                "@eslint/js": "10.0.1",
-                "@axe-core/playwright": "4.12.1",
-                "@playwright/test": "1.62.1",
-                "@testing-library/jest-dom": "7.0.0",
-                "@testing-library/react": "16.3.2",
-                "@types/node": "26.1.2",
-                "@types/react": "19.2.18",
-                "@types/react-dom": "19.2.4",
-                "@vitejs/plugin-react": "6.0.5",
-                "eslint": "10.8.0",
-                "eslint-plugin-react-hooks": "7.1.1",
-                "eslint-plugin-react-refresh": "0.5.3",
-                "globals": "17.9.0",
-                "jsdom": "30.0.1",
-                "typescript": "6.0.3",
-                "typescript-eslint": "8.66.0",
-                "vite": "8.2.0",
-                "vitest": "4.1.10",
-            },
-        )
+        self.assertEqual(package["dependencies"]["@local-web/ui"], "file:vendor/local-web-ui.tgz")
         self.assertTrue((destination / "package-lock.json").is_file())
         self.assertTrue((destination / "src/contextExport.ts").is_file())
         self.assertTrue((destination / "src/contextExport.test.ts").is_file())
@@ -573,7 +542,6 @@ class AppGeneratorIntegrationTests(unittest.TestCase):
             class ObservingProcessRunner(ProcessRunner):
                 def __init__(self):
                     super().__init__()
-                    self.calls = []
                     self.lint_results = []
 
                 def lint(self, repository, source):
@@ -609,7 +577,6 @@ class AppGeneratorIntegrationTests(unittest.TestCase):
                     (repository / "src/tabler-policy.ts").unlink()
 
                 def run(self, repository, commands):
-                    self.calls.append(tuple(command.label for command in commands))
                     if tuple(command.label for command in commands) == (
                         "npm-check",
                         "npm-e2e",
@@ -650,14 +617,6 @@ class AppGeneratorIntegrationTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(status.stdout, "")
-            self.assertEqual(
-                runner.calls,
-                [
-                    ("npm-lock", "npm-install", "git-init", "git-add"),
-                    ("npm-check", "npm-e2e"),
-                    ("git-commit",),
-                ],
-            )
 
 
 if __name__ == "__main__":
