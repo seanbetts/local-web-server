@@ -4,8 +4,23 @@
     "pull_request": {},
     "workflow_dispatch": {
       "inputs": {
+        "level": {
+          "description": "Verification depth (release also checks pinned theme visuals)",
+          "type": "choice",
+          "options": [
+            "routine",
+            "integration",
+            "release"
+          ],
+          "default": "release"
+        },
         "compatibility": {
           "description": "Also check other supported Node majors",
+          "type": "boolean",
+          "default": false
+        },
+        "stress": {
+          "description": "Also check supported profile restore scale",
           "type": "boolean",
           "default": false
         }
@@ -16,8 +31,8 @@
     "contents": "read"
   },
   "jobs": {
-    "python": {
-      "name": "Python 3.14",
+    "checks": {
+      "name": "macOS \u00b7 Python 3.14 \u00b7 Node 24",
       "runs-on": "macos-15",
       "timeout-minutes": 60,
       "env": {
@@ -33,8 +48,19 @@
           "uses": "actions/checkout@v7",
           "with": {
             "persist-credentials": false,
-            "set-safe-directory": false
+            "set-safe-directory": false,
+            "fetch-depth": 0
           }
+        },
+        {
+          "name": "Select additional verification",
+          "id": "scope",
+          "env": {
+            "EVENT": "${{ github.event_name }}",
+            "BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+            "LEVEL": "${{ inputs.level }}"
+          },
+          "run": "python3 - <<'PY_SCOPE'\nimport os\nimport subprocess\nfrom pathlib import Path\n\nif os.environ[\"EVENT\"] == \"pull_request\":\n    paths = subprocess.check_output([\n        \"git\", \"diff\", \"--name-only\", \"-z\", os.environ[\"BASE_SHA\"], \"HEAD\"\n    ]).decode().split(\"\\0\")\n    paths = [path for path in paths if path]\n    routine = lambda p: p in {\"README.md\", \"CONTRIBUTING.md\", \"LICENSE\"} or p.startswith((\n        \"docs/\", \"skills/\", \"apps/system-index/\", \"packages/ui/src/\",\n        \"examples/\", \"platform_assets/\"))\n    integration = any(not routine(p) for p in paths)\n    release = any(not routine(p) and not p.startswith((\"local_web_server/\", \"tests/\", \"templates/\")) for p in paths)\n    release = release or any(p.startswith(\"templates/\") or p in {\n        \"local_web_server/app_generator.py\", \"local_web_server/app_foundation.py\",\n        \"local_web_server/app_template.py\", \"local_web_server/ui_package.py\",\n        \"local_web_server/app_update.py\", \"local_web_server/app_activation.py\",\n        \"local_web_server/fleet_update.py\", \"local_web_server/service_command_migration.py\",\n        \"local_web_server/public_base_path_migration.py\"\n    } for p in paths)\n    visual = release or any(p.startswith((\"packages/ui/\", \"examples/ui-gallery/\", \"platform_assets/\")) or p in {\n        \"local_web_server/theme_gate.py\", \"tests/test_theme_gate.py\"\n    } for p in paths)\nelse:\n    integration = os.environ[\"LEVEL\"] in {\"integration\", \"release\"}\n    release = os.environ[\"LEVEL\"] == \"release\"\n    visual = release\nwith Path(os.environ[\"GITHUB_OUTPUT\"]).open(\"a\") as output:\n    for name, value in ((\"integration\", integration), (\"release\", release), (\"visual\", visual)):\n        output.write(f\"{name}={str(value).lower()}\\n\")\nPY_SCOPE"
         },
         {
           "name": "Set up Python",
@@ -57,91 +83,71 @@
           "run": "npm ci --ignore-scripts"
         },
         {
-          "name": "Provision the isolated runner npm",
-          "run": "/opt/homebrew/bin/npm install --global npm@11.19.0 --ignore-scripts"
-        },
-        {
-          "name": "Report the isolated runner npm version",
-          "run": "/opt/homebrew/bin/npm --version | grep -Fx '11.19.0'"
-        },
-        {
           "name": "Install the Chromium test browser",
           "run": "npx playwright install chromium"
-        },
-        {
-          "name": "Install Caddy 2",
-          "run": "brew install caddy"
-        },
-        {
-          "name": "Report the selected Caddy version",
-          "run": "caddy version | grep -E '^v2[.]'"
         },
         {
           "name": "Compile Python sources",
           "run": "python3 -m compileall -q local_web_server scripts tests"
         },
         {
-          "name": "Run the fast Python suite",
-          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python"
+          "name": "Run routine contracts and functional browser journeys",
+          "run": "PYTHONWARNINGS=error::ResourceWarning npm run check"
         },
         {
-          "name": "Run the Python acceptance suite",
-          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python:acceptance"
+          "name": "Install Caddy 2",
+          "run": "brew install caddy",
+          "if": "steps.scope.outputs.integration == 'true'"
         },
         {
-          "name": "Run critical browser journeys",
-          "run": "npm run check:frontend:browser"
-        }
-      ]
-    },
-    "node": {
-      "name": "Frontend (Node 24)",
-      "runs-on": "ubuntu-24.04",
-      "timeout-minutes": 30,
-      "env": {
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_TERMINAL_PROMPT": "0",
-        "GIT_ASKPASS": "/usr/bin/false",
-        "SSH_ASKPASS": "/usr/bin/false"
-      },
-      "steps": [
+          "name": "Report the selected Caddy version",
+          "run": "caddy version | grep -E '^v2[.]'",
+          "if": "steps.scope.outputs.integration == 'true'"
+        },
         {
-          "name": "Check out the public tree",
-          "uses": "actions/checkout@v7",
+          "name": "Provision the isolated runner npm",
+          "run": "/opt/homebrew/bin/npm install --global npm@11.19.0 --ignore-scripts",
+          "if": "steps.scope.outputs.release == 'true'"
+        },
+        {
+          "name": "Report the isolated runner npm version",
+          "run": "/opt/homebrew/bin/npm --version | grep -Fx '11.19.0'",
+          "if": "steps.scope.outputs.release == 'true'"
+        },
+        {
+          "name": "Run relevant integration and recovery checks",
+          "if": "steps.scope.outputs.integration == 'true'",
+          "run": "PYTHONWARNINGS=error::ResourceWarning npm run check:integration"
+        },
+        {
+          "name": "Run additional release lifecycle checks",
+          "if": "steps.scope.outputs.release == 'true'",
+          "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python:release && npm run verify:new-app && npm run verify:new-service-app && npm run verify:repository-service-transition"
+        },
+        {
+          "name": "Check pinned theme visuals",
+          "if": "steps.scope.outputs.visual == 'true'",
+          "run": "npm run test:gallery:visual"
+        },
+        {
+          "name": "Retain failed visual comparisons",
+          "if": "failure() && steps.scope.outputs.visual == 'true'",
+          "uses": "actions/upload-artifact@v4",
           "with": {
-            "persist-credentials": false,
-            "set-safe-directory": false
+            "name": "theme-visual-differences",
+            "path": "examples/ui-gallery/test-results/**/*.png",
+            "if-no-files-found": "ignore",
+            "retention-days": 7
           }
         },
         {
-          "name": "Set up Node",
-          "uses": "actions/setup-node@v7",
-          "with": {
-            "node-version": "24",
-            "cache": "npm",
-            "cache-dependency-path": "package-lock.json"
-          }
+          "name": "Check optional supported scale",
+          "if": "github.event_name == 'workflow_dispatch' && inputs.stress",
+          "run": "PYTHONWARNINGS=error::ResourceWarning npm run test:python:stress"
         },
         {
-          "name": "Install locked dependencies without lifecycle scripts",
-          "run": "npm ci --ignore-scripts"
-        },
-        {
-          "name": "Run the build-once frontend checks",
-          "run": "npm run check:frontend"
-        },
-        {
-          "name": "Verify the public release surface",
-          "run": "npm run verify:public-release"
-        },
-        {
-          "name": "Audit all production and development dependencies",
+          "name": "Audit locked dependencies",
           "run": "npm audit"
-        },
-        {
-          "name": "Audit production dependencies",
-          "run": "npm audit --omit=dev"
         }
       ]
     },

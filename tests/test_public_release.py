@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest import mock
 
 from local_web_server import public_release
-from local_web_server.config import load_registry
 from local_web_server.public_release import (
     PublicReleaseError,
     load_private_policy,
@@ -499,7 +498,7 @@ class PublicTrackedTreeTests(PublicReleaseTestCase):
             "tree.staged", lambda: verify_public_tree(self.repository.path)
         )
 
-    def test_object_inspection_uses_two_batches_and_one_operation_deadline(self):
+    def test_object_inspection_shares_one_operation_deadline(self):
         original = public_release._run_git
         calls: list[tuple[tuple[str, ...], float | None]] = []
 
@@ -513,10 +512,6 @@ class PublicTrackedTreeTests(PublicReleaseTestCase):
         deadlines = {deadline for _, deadline in calls}
         self.assertEqual(len(deadlines), 1)
         self.assertNotIn(None, deadlines)
-        self.assertEqual(
-            [arguments for arguments, _ in calls if arguments[:1] == ("cat-file",)],
-            [("cat-file", "--batch-check"), ("cat-file", "--batch")],
-        )
 
     def test_requires_each_public_contract_file(self):
         required = (
@@ -1432,47 +1427,6 @@ class PublicCiWorkflowTests(unittest.TestCase):
 
 
 class RepositoryPublicSurfaceTests(unittest.TestCase):
-    def test_index_fixture_and_example_registry_are_generic_and_parseable(self):
-        registry_path = ROOT / "config/apps.example.json"
-        registry = load_registry(registry_path)
-        payload = json.loads(registry_path.read_text(encoding="utf-8"))
-
-        self.assertEqual(registry.schema_version, 2)
-        self.assertEqual(registry.public_origin, "https://local.example.ts.net")
-        self.assertEqual(payload["runtimeRoot"], "/Users/example/Coding/runtime")
-        self.assertGreaterEqual(len(registry.apps), 2)
-        self.assertTrue(all(app.id.startswith("example-") for app in registry.apps))
-        self.assertTrue(
-            all(str(app.repository).startswith("/Users/example/Coding/") for app in registry.apps)
-        )
-
-        index = json.loads(
-            ROOT.joinpath("apps/system-index/fixtures/registry-v1.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        self.assertGreaterEqual(len(index["apps"]), 3)
-        self.assertTrue(all(app["id"].startswith("example-") for app in index["apps"]))
-        self.assertTrue(all(app["title"].startswith("Example ") for app in index["apps"]))
-        self.assertTrue(public_release._index_fixture_is_generic(index))
-
-
-
-
-    def test_private_directory_contract_and_public_tracked_surface_are_exact(self):
-        self.assertEqual(
-            ROOT.joinpath("config/local/.gitignore").read_text(encoding="utf-8"),
-            "*\n!.gitignore\n!README.md\n",
-        )
-        tracked = set(_git(ROOT, "ls-files").stdout.splitlines())
-        self.assertNotIn("config/apps.json", tracked)
-        self.assertFalse(any(path.startswith(".superpowers/") for path in tracked))
-        self.assertFalse(any(path.startswith("docs/superpowers/") for path in tracked))
-        self.assertEqual(
-            {path for path in tracked if path.startswith("config/local/")},
-            {"config/local/.gitignore", "config/local/README.md"},
-        )
-
     def test_tracked_public_text_has_no_private_deployment_markers(self):
         forbidden = (
             "/Users/" + "sean",

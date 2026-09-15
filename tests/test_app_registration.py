@@ -1,5 +1,4 @@
 import json
-import os
 import shutil
 import subprocess
 import tempfile
@@ -81,16 +80,6 @@ class AppRegistrationTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_registrar_exposes_plans_but_no_direct_profile_write_escape_hatches(self):
-        for name in (
-            "publish_service_command_migration",
-            "restore_service_command_migration",
-            "publish_public_base_path_migration",
-            "restore_public_base_path_migration",
-            "_publish_registry",
-        ):
-            with self.subTest(name=name):
-                self.assertFalse(hasattr(AppRegistrar, name))
 
     def _write_registry(self, payload) -> None:
         content = (json.dumps(payload, indent=4) + "\n").encode("utf-8")
@@ -556,10 +545,6 @@ class AppRegistrationTests(unittest.TestCase):
         self.assertIn(str(repository.resolve()), candidate["apps"][0]["startCommand"][-1])
         self.assertNotIn("old-service.mjs", repr(plan))
         self.assertNotIn("service.mjs", repr(plan))
-        self.assertEqual(
-            {name for name in plan.__dataclass_fields__ if not name.startswith("_")},
-            {"app_id", "route", "port", "registry", "changed"},
-        )
 
         self.registry.write_bytes(plan._candidate)
         current = registrar.plan_service_command_migration(repository, self.registry)

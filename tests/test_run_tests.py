@@ -38,6 +38,24 @@ class RunTestsTests(unittest.TestCase):
                     self.assertEqual(result, 1)
                     self.assertIn("test_broken_import", errors.getvalue())
 
+    def test_focused_execution_runs_integration_module_without_running_other_tests(self):
+        class FocusedCase(unittest.TestCase):
+            def runTest(self):
+                observed.append("focused")
+
+        observed = []
+        loader = unittest.TestLoader()
+        with (
+            patch.object(run_tests.unittest, "TestLoader", return_value=loader),
+            patch.object(loader, "loadTestsFromNames", return_value=unittest.TestSuite([FocusedCase()])) as load,
+            patch.object(loader, "discover", side_effect=AssertionError("unrelated discovery")),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(run_tests.main(["tests.test_deploy"]), 0)
+        load.assert_called_once_with(["tests.test_deploy"])
+        self.assertEqual(observed, ["focused"])
+
     @unittest.skipUnless(hasattr(socket, "AF_UNIX"), "requires Unix sockets")
     def test_owned_tmpdir_supports_nested_unix_socket_fixtures(self):
         with run_tests._owned_test_tmpdir():

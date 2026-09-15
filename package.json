@@ -9,13 +9,13 @@
     "node": ">=22.22.2 <23 || >=24.15.0 <25 || >=26.0.0"
   },
   "scripts": {
-    "check": "npm run test:python && npm run check:frontend",
-    "check:all": "npm run test:python:all && npm run build:ui && npm run check:frontend:prepared && npm run check:frontend:browser:prepared",
+    "check": "npm run test:python && npm run check:frontend && npm run check:frontend:browser:prepared && npm run verify:public-release",
+    "check:all": "npm run test:python:all && npm run build:ui && npm run check:frontend:prepared && npm run check:frontend:browser:prepared && npm run test:gallery:visual && npm run verify:public-release",
     "check:frontend": "npm run build:ui && npm run check:frontend:prepared",
     "check:frontend:prepared": "npm run check:ui && npm run check:ui:consumer:prepared && npm run test:ui -- --run && npm run check:index:prepared && npm run build:gallery && npm run test:gallery -- --run && npm run test:interactive-export",
     "check:frontend:browser": "npm run build:ui && npm run build:index:prepared && npm run check:frontend:browser:prepared",
-    "check:frontend:browser:prepared": "npm run test:index:e2e:prepared && npm run test:gallery:e2e && npm run test:interactive-export:e2e:prepared",
-    "test:python": "python3 scripts/run_tests.py --suite fast",
+    "check:frontend:browser:prepared": "npm run test:index:e2e:prepared && npm run test:gallery:functional && npm run test:interactive-export:e2e:prepared",
+    "test:python": "python3 scripts/run_tests.py --suite routine",
     "test:python:acceptance": "python3 scripts/run_tests.py --suite acceptance",
     "test:python:all": "python3 scripts/run_tests.py --suite all",
     "test:ui": "vitest --config packages/ui/vite.config.ts",
@@ -49,7 +49,13 @@
     "verify:public-release": "python3 scripts/verify_public_release.py",
     "pack:ui": "python3 scripts/build_ui_package.py artifacts/local-web-ui.tgz",
     "pack:ui:0.7.0": "python3 scripts/build_ui_package.py artifacts/local-web-ui-0.7.0.tgz",
-    "test:python:stress": "python3 scripts/run_tests.py --suite stress"
+    "test:python:stress": "python3 scripts/run_tests.py --suite stress",
+    "check:integration": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 npm run test:python:integration",
+    "check:release": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 npm run check:all && npm run verify:new-app && npm run verify:new-service-app && npm run verify:repository-service-transition",
+    "test:python:integration": "python3 scripts/run_tests.py --suite integration",
+    "test:python:release": "python3 scripts/run_tests.py --suite release",
+    "test:gallery:functional": "playwright test --config examples/ui-gallery/playwright.config.ts --grep-invert @visual",
+    "test:gallery:visual": "playwright test --config examples/ui-gallery/playwright.config.ts --grep @visual"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",

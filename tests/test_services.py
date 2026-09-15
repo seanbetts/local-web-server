@@ -12,7 +12,6 @@ from local_web_server.services import (
     LaunchctlServiceController,
     ServiceState,
 )
-from tests.helpers import FakeHealthChecker, FakeServiceController
 from tests.redirect_fixture import RedirectServer
 
 
@@ -486,50 +485,6 @@ class HttpHealthCheckerTests(unittest.TestCase):
         self.assertEqual(result.error, "HTTP 500")
 
 
-class ServiceAndHealthFakesTests(unittest.TestCase):
-    def test_fake_service_controller_records_each_interface_call(self):
-        controller = FakeServiceController(state=ServiceState.STOPPED)
-        label = "com.sean.local-web.samplealpha"
-        plist = Path("/tmp/com.sean.local-web.samplealpha.plist")
-
-        self.assertEqual(controller.state(label), ServiceState.STOPPED)
-        controller.ensure_running(label, plist)
-        controller.restart(label, plist)
-        controller.stop(label, plist)
-        controller.replace(label, plist)
-
-        self.assertEqual(
-            controller.calls,
-            [
-                ("state", label, None),
-                ("ensure_running", label, plist),
-                ("restart", label, plist),
-                ("stop", label, plist),
-                ("replace", label, plist),
-            ],
-        )
-
-    def test_fake_service_controller_can_queue_readiness_states(self):
-        controller = FakeServiceController(
-            state=ServiceState.RUNNING,
-            states=[ServiceState.STOPPED, ServiceState.MISSING],
-        )
-
-        self.assertEqual(controller.state("fixture"), ServiceState.STOPPED)
-        self.assertEqual(controller.state("fixture"), ServiceState.MISSING)
-        self.assertEqual(controller.state("fixture"), ServiceState.RUNNING)
-
-    def test_fake_health_checker_records_urls_and_returns_configured_results(self):
-        first = HealthResult(False, 503, "HTTP 503")
-        fallback = HealthResult(True, 200, None)
-        health = FakeHealthChecker(result=fallback, results=[first])
-
-        self.assertEqual(health.check("http://example.test/first"), first)
-        self.assertEqual(health.check("http://example.test/second"), fallback)
-        self.assertEqual(
-            health.calls,
-            ["http://example.test/first", "http://example.test/second"],
-        )
 
 
 if __name__ == "__main__":

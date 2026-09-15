@@ -376,33 +376,23 @@ ingress diagnosis, machine restoration, and live readback expectations.
 
 ## Verification
 
-Framework verification is disposable by default. The routine gate runs fast
-Python tests and frontend checks; the full gate adds real workflow acceptance
-and browser coverage:
+Routine framework feedback combines focused Python contracts, frontend types,
+builds and tests, essential browser journeys, and committed public-tree privacy:
 
 ```sh
 PYTHONWARNINGS=error::ResourceWarning npm run check
-LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run check:all
-npm run verify:host-profile
-npm run verify:public-release
-npm audit
-npm audit --omit=dev
 ```
 
-Use `npm run test:python:acceptance` for the real Python integration group, or
-`python3 scripts/run_tests.py --suite acceptance --list` to see its membership.
-The runner reports exclusions explicitly; ordinary unittest discovery still
-runs the complete suite. See [Choosing checks](CONTRIBUTING.md#choosing-checks)
-for focused commands, prerequisites, and coverage ownership. Run the matching
-[disposable workflow](CONTRIBUTING.md#disposable-framework-workflows) when its
-lifecycle contract changes; the automated suite gate does not invoke every
-standalone workflow.
+For deployment, storage, security and update changes, add
+`npm run check:integration` and the relevant lifecycle journey. Before a release,
+run `npm run check:release`. Scale and additional Node compatibility remain
+explicit maintenance checks. See [Choosing checks](CONTRIBUTING.md#choosing-checks)
+for exact commands, coverage owners, CI selection and feedback budgets.
 
-The host-profile workflow uses temporary repositories/runtime state and real
-Caddy validation when available. No disposable pass proves a live host, remote,
-or physical device. Rendered UI acceptance includes accessibility, no-overflow,
-keyboard behavior, desktop/390 px/320 px layouts, light/dark modes, and deliberate
-review of pinned screenshots.
+Use same-revision evidence instead of repeating an unchanged disposable workflow.
+No disposable pass proves a live host, remote, or physical device. Rendered UI
+acceptance includes accessibility, no-overflow, keyboard behaviour, narrow layouts,
+light/dark modes and deliberate review of pinned screenshots for theme changes.
 
 Application repositories use:
 
