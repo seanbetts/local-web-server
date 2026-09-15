@@ -36,7 +36,7 @@ function interactiveFixture() {
 }
 
 describe('interactive export Vite integration', () => {
-  it('fails closed on a deleted dev dependency and re-enables after restoration', async () => {
+  it('refreshes edited dev dependencies, fails closed on deletion and recovers', async () => {
     const root = interactiveFixture();
     writeFileSync(join(root,'index.html'), '<html><head></head><body></body></html>');
     writeFileSync(join(root,'offline-only.ts'), 'export const label="Before deletion";');
@@ -63,10 +63,16 @@ describe('interactive export Vite integration', () => {
       const metadata = new DOMParser().parseFromString(html,'text/html').querySelector('meta[name="local-web-interactive-export-template"]')!;
       const {templateUrl: _url,...identity} = after;
       expect(JSON.parse(atob(metadata.getAttribute('content')!))).toEqual(identity);
+      writeFileSync(join(root, 'offline-only.ts'), 'export const label="Edited dependency";');
+      await vi.waitFor(async () => expect((await descriptor()).templateId).not.toBe(after.templateId), {timeout:4000});
+      const edited = await descriptor();
+      expect(edited.compatibilityId).not.toBe(after.compatibilityId);
+      expect(edited.payloadContractId).toBe(after.payloadContractId);
+      expect(await (await fetch(new URL(edited.templateUrl, origin))).text()).toContain('Edited dependency');
     } finally { await server.close(); }
   }, 10000);
 
-  it('fails build-watch on dependency deletion and publishes a coherent restored build', async () => {
+  it('refreshes build-watch dependencies and publishes a coherent build after deletion recovery', async () => {
     const root = interactiveFixture();
     writeFileSync(join(root,'index.html'), '<html><head></head><body><script type="module" src="/hosted.ts"></script></body></html>');
     writeFileSync(join(root,'hosted.ts'), 'import {contract} from "./contract"; import descriptor from "virtual:local-web-interactive-export"; document.body.textContent=JSON.stringify({contract,descriptor});');
@@ -93,6 +99,15 @@ describe('interactive export Vite integration', () => {
       const hosted = readFileSync(join(root,'dist',index.querySelector('script[src]')!.getAttribute('src')!.slice('/records/'.length)),'utf8');
       expect(hosted).toContain(after.templateId);
       expect(hosted).toContain(after.compatibilityId);
+      writeFileSync(join(root, 'offline-only.ts'), 'export const label="Edited dependency";');
+      await vi.waitFor(() => expect(descriptor().templateId).not.toBe(after.templateId), {timeout:4000});
+      const edited = descriptor();
+      expect(edited.compatibilityId).not.toBe(after.compatibilityId);
+      expect(readFileSync(join(root, 'dist', edited.templateUrl.slice('/records/'.length)), 'utf8')).toContain('Edited dependency');
+      const updatedIndex = new DOMParser().parseFromString(readFileSync(join(root, 'dist/index.html'), 'utf8'), 'text/html');
+      const updatedHosted = readFileSync(join(root, 'dist', updatedIndex.querySelector('script[src]')!.getAttribute('src')!.slice('/records/'.length)), 'utf8');
+      expect(updatedHosted).toContain(edited.templateId);
+      expect(updatedHosted).toContain(edited.compatibilityId);
     } finally { await watcher.close(); }
   }, 10000);
   it('makes the virtual descriptor type available from a dist-only published package', async () => {
