@@ -223,9 +223,11 @@ describe('InteractiveExportControl', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Export' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Context document' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Context document' }));
+    });
 
-    await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    expect(download).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('status')).toHaveTextContent('Context exported.');
   });
 
