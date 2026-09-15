@@ -317,8 +317,8 @@ try {
   const installedPackage = JSON.parse(
     await readFile(join(installedPackageRoot, 'package.json'), 'utf8'),
   );
-  if (installedPackage.version !== '0.7.1') {
-    throw new Error('UI package does not expose the current 0.7.1 release');
+  if (installedPackage.version !== '0.7.2') {
+    throw new Error('UI package does not expose the current 0.7.2 release');
   }
   if (installedPackage.exports?.['./styles.css'] !== './dist/styles.css') {
     throw new Error('UI package does not expose the explicit styles export');

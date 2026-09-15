@@ -24,7 +24,7 @@ const runtimeCapture = () => ({
 describe('interactive export fixture contract', () => {
   it('declares the current public UI interactive export contract', () => {
     const manifest = JSON.parse(readFileSync(new URL('local-web.json', fixtureRoot), 'utf8'));
-    expect(manifest.platform.uiVersion).toBe('0.7.1');
+    expect(manifest.platform.uiVersion).toBe('0.7.2');
   });
 
   it('accepts runtime data and both supported sort dimensions', () => {

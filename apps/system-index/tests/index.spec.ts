@@ -53,6 +53,27 @@ test('shows app health and opens an app with the keyboard', async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
+test('separates the shared UI version from the header controls', async ({ page }) => {
+  await openIndex(page);
+
+  const header = page.locator('.lwp-platform-shell__header-actions');
+  const version = header.locator('.lwp-platform-version');
+  const gallery = header.getByRole('link', { name: 'UI Gallery' });
+  const theme = header.getByRole('group', { name: 'Colour mode' });
+  const [versionBox, galleryBox, themeBox] = await Promise.all([
+    version.boundingBox(),
+    gallery.boundingBox(),
+    theme.boundingBox(),
+  ]);
+
+  expect(versionBox).not.toBeNull();
+  expect(galleryBox).not.toBeNull();
+  expect(themeBox).not.toBeNull();
+  const versionGap = galleryBox!.x - (versionBox!.x + versionBox!.width);
+  const controlGap = themeBox!.x - (galleryBox!.x + galleryBox!.width);
+  expect(versionGap).toBeGreaterThan(controlGap);
+});
+
 test('keeps failed apps accessible on a narrow screen and opens the full card', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await openIndex(page, false);

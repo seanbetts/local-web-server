@@ -31,7 +31,7 @@ describe('AppShell', () => {
     expect(screen.queryByText('System Index')).not.toBeInTheDocument();
     expect(screen.queryByText('All apps')).not.toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: /export/i })).toHaveLength(0);
-    expect(screen.getByLabelText('Local Web UI version 0.7.1')).toHaveTextContent('v0.7.1');
+    expect(screen.getByLabelText('Local Web UI version 0.7.2')).toHaveTextContent('v0.7.2');
     expect(screen.getByText('Offline snapshot')).toBeVisible();
     expect(screen.getByText(/Sensitive/)).toBeVisible();
     expect(screen.getByText(/Captured 8 September 2026/)).toBeVisible();
@@ -138,9 +138,9 @@ describe('AppShell', () => {
     expect(screen.getByRole('group', { name: 'Sample Workspace actions' }))
       .toHaveTextContent('Export');
     const end = container.querySelector('.lwp-app-shell__end');
-    const version = screen.getByLabelText('Local Web UI version 0.7.1');
+    const version = screen.getByLabelText('Local Web UI version 0.7.2');
     const actions = screen.getByRole('group', { name: 'Sample Workspace actions' });
-    expect(version).toHaveTextContent('v0.7.1');
+    expect(version).toHaveTextContent('v0.7.2');
     expect(version.parentElement).toBe(end);
     expect([...end!.children].slice(0, 2)).toEqual([version, actions.parentElement]);
 

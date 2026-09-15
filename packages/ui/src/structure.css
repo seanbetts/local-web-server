@@ -133,6 +133,7 @@
 
   .lwp-platform-version {
     flex: none;
+    margin-inline-end: var(--lwp-space-2);
     color: var(--lwp-colour-text-muted);
     font-family: var(--lwp-font-mono);
     font-size: 0.75rem;

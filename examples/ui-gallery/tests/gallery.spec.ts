@@ -284,7 +284,7 @@ test('keeps the complete app-page breadcrumb readable at 320px', async ({ page }
   await expect(page.getByRole('link', { name: 'Sample Workspace' }))
     .toHaveAttribute('href', '/samplebeta/');
   await expect(page.getByText('David Platt', { exact: true })).toHaveAttribute('aria-current', 'page');
-  const version = page.getByLabel('Local Web UI version 0.7.1');
+  const version = page.getByLabel('Local Web UI version 0.7.2');
   await expect(version).toBeVisible();
   const appCrumb = await box(page.getByRole('link', { name: 'Sample Workspace' }));
   const pageCrumb = await box(page.getByText('David Platt', { exact: true }));
