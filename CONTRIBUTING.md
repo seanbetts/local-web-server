@@ -58,7 +58,9 @@ uses unittest's duration reporting. Tier membership is explicit in
 `scripts/run_tests.py`: unknown modules default to integration. `routine`,
 `integration` and `release` are disjoint; `all` is their union. The old direct
 `fast` and `acceptance` selections remain available with their previous meaning,
-but are not the routine policy. Ordinary discovery also includes stress:
+but are not the routine policy. Named targets without `--suite` run every selected
+test, including explicit stress targets; whole-suite `all` excludes stress.
+Ordinary discovery also includes stress:
 
 ```sh
 python3 -m unittest discover -s tests -v
@@ -143,10 +145,13 @@ visual gate remains blocked; functional success does not replace it.
 
 Every PR runs the routine tier on macOS 15, Python 3.14 and Node 24. The workflow
 contains a small path policy: docs/frontend changes run routine; Python tests,
-framework and templates add integration; shared scripts, dependency/configuration
-and unknown paths add release verification. Theme/shell changes add visual checks.
-Lifecycle implementation/template changes also add release journeys. Changes to
-selection or shared verification infrastructure therefore exercise the full gate.
+framework and templates add integration. Runtime sources default to release,
+except an explicit set of configuration/rendering, service and profile components
+whose real journeys already run in integration. Release-tier test modules,
+shared test helpers, selection infrastructure, templates, shared scripts,
+dependency/configuration and unknown paths add release verification. Theme/shell
+changes add visual checks. Changes to shared verification infrastructure
+therefore exercise the full gate.
 
 Manual dispatch selects routine/integration/release depth, plus optional Node
 22/26 compatibility and supported-scale restoration. Compatibility runs functional

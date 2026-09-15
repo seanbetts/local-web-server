@@ -80,7 +80,7 @@ def main(arguments=None):
     parser.add_argument("--list", action="store_true")
     parser.add_argument("tests", nargs="*", help="unittest module, class or method names")
     options = parser.parse_args(arguments)
-    options.suite = options.suite or ("all" if options.tests else "routine")
+    options.suite = options.suite or ("focused" if options.tests else "routine")
     with _owned_test_tmpdir():
         loader = unittest.TestLoader()
         try:
@@ -96,7 +96,8 @@ def main(arguments=None):
         selected = []
         for test in discovered:
             group = tier(test)
-            include = group == options.suite or (options.suite == "all" and group != "stress")
+            include = options.suite == "focused" or group == options.suite or (
+                options.suite == "all" and group != "stress")
             # Retain the old direct-runner partition names for existing callers.
             if options.suite in ("fast", "acceptance"):
                 include = group != "stress" and marked(test, ACCEPTANCE_MARKER) == (options.suite == "acceptance")

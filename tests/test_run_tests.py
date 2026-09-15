@@ -56,6 +56,29 @@ class RunTestsTests(unittest.TestCase):
         load.assert_called_once_with(["tests.test_deploy"])
         self.assertEqual(observed, ["focused"])
 
+    def test_focused_stress_target_runs_but_explicit_all_excludes_it(self):
+        class StressCase(unittest.TestCase):
+            def runTest(self):
+                observed.append("stress")
+
+        setattr(StressCase, run_tests.STRESS_MARKER, True)
+        for arguments, expected in (
+            (["tests.test_scale"], ["stress"]),
+            (["--suite", "all", "tests.test_scale"], []),
+        ):
+            with self.subTest(arguments=arguments):
+                observed = []
+                loader = unittest.TestLoader()
+                with (
+                    patch.object(run_tests.unittest, "TestLoader", return_value=loader),
+                    patch.object(loader, "loadTestsFromNames", return_value=unittest.TestSuite([StressCase()])),
+                    patch.object(loader, "discover", side_effect=AssertionError("unrelated discovery")),
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    self.assertEqual(run_tests.main(arguments), 0)
+                self.assertEqual(observed, expected)
+
     @unittest.skipUnless(hasattr(socket, "AF_UNIX"), "requires Unix sockets")
     def test_owned_tmpdir_supports_nested_unix_socket_fixtures(self):
         with run_tests._owned_test_tmpdir():

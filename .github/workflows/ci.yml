@@ -53,6 +53,13 @@
           }
         },
         {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v7",
+          "with": {
+            "python-version": "3.14"
+          }
+        },
+        {
           "name": "Select additional verification",
           "id": "scope",
           "env": {
@@ -60,14 +67,7 @@
             "BASE_SHA": "${{ github.event.pull_request.base.sha }}",
             "LEVEL": "${{ inputs.level }}"
           },
-          "run": "python3 - <<'PY_SCOPE'\nimport os\nimport subprocess\nfrom pathlib import Path\n\nif os.environ[\"EVENT\"] == \"pull_request\":\n    paths = subprocess.check_output([\n        \"git\", \"diff\", \"--name-only\", \"-z\", os.environ[\"BASE_SHA\"], \"HEAD\"\n    ]).decode().split(\"\\0\")\n    paths = [path for path in paths if path]\n    routine = lambda p: p in {\"README.md\", \"CONTRIBUTING.md\", \"LICENSE\"} or p.startswith((\n        \"docs/\", \"skills/\", \"apps/system-index/\", \"packages/ui/src/\",\n        \"examples/\", \"platform_assets/\"))\n    integration = any(not routine(p) for p in paths)\n    release = any(not routine(p) and not p.startswith((\"local_web_server/\", \"tests/\", \"templates/\")) for p in paths)\n    release = release or any(p.startswith(\"templates/\") or p in {\n        \"local_web_server/app_generator.py\", \"local_web_server/app_foundation.py\",\n        \"local_web_server/app_template.py\", \"local_web_server/ui_package.py\",\n        \"local_web_server/app_update.py\", \"local_web_server/app_activation.py\",\n        \"local_web_server/fleet_update.py\", \"local_web_server/service_command_migration.py\",\n        \"local_web_server/public_base_path_migration.py\"\n    } for p in paths)\n    visual = release or any(p.startswith((\"packages/ui/\", \"examples/ui-gallery/\", \"platform_assets/\")) or p in {\n        \"local_web_server/theme_gate.py\", \"tests/test_theme_gate.py\"\n    } for p in paths)\nelse:\n    integration = os.environ[\"LEVEL\"] in {\"integration\", \"release\"}\n    release = os.environ[\"LEVEL\"] == \"release\"\n    visual = release\nwith Path(os.environ[\"GITHUB_OUTPUT\"]).open(\"a\") as output:\n    for name, value in ((\"integration\", integration), (\"release\", release), (\"visual\", visual)):\n        output.write(f\"{name}={str(value).lower()}\\n\")\nPY_SCOPE"
-        },
-        {
-          "name": "Set up Python",
-          "uses": "actions/setup-python@v7",
-          "with": {
-            "python-version": "3.14"
-          }
+          "run": "python3 - <<'PY_SCOPE'\nimport os\nimport subprocess\nfrom pathlib import Path\n\nfrom scripts.run_tests import RELEASE_MODULES\n\nif os.environ[\"EVENT\"] == \"pull_request\":\n    paths = subprocess.check_output([\n        \"git\", \"diff\", \"--name-only\", \"-z\", os.environ[\"BASE_SHA\"], \"HEAD\"\n    ]).decode().split(\"\\0\")\n    paths = [path for path in paths if path]\n    routine = lambda p: p in {\"README.md\", \"CONTRIBUTING.md\", \"LICENSE\"} or p.startswith((\n        \"docs/\", \"skills/\", \"apps/system-index/\", \"packages/ui/src/\",\n        \"examples/\", \"platform_assets/\"))\n    # These components already have their real journeys in integration.\n    integration_runtime = {\n        \"config\", \"render\", \"services\", \"host_commands\", \"host_profile\",\n        \"host_profile_store\", \"host_profile_backup\", \"host_profile_recovery\",\n    }\n    def needs_release(path):\n        if routine(path):\n            return False\n        source = Path(path)\n        if source.parent == Path(\"local_web_server\") and source.suffix == \".py\":\n            return source.stem not in integration_runtime\n        if source.parent == Path(\"tests\") and source.name.startswith(\"test_\") and source.suffix == \".py\":\n            return source.stem.removeprefix(\"test_\") in RELEASE_MODULES | {\"run_tests\"}\n        # Shared test helpers, templates and unknown paths exercise the full gate.\n        return True\n    integration = any(not routine(p) for p in paths)\n    release = any(needs_release(p) for p in paths)\n    visual = release or any(p.startswith((\"packages/ui/\", \"examples/ui-gallery/\", \"platform_assets/\")) or p in {\n        \"local_web_server/theme_gate.py\", \"tests/test_theme_gate.py\"\n    } for p in paths)\nelse:\n    integration = os.environ[\"LEVEL\"] in {\"integration\", \"release\"}\n    release = os.environ[\"LEVEL\"] == \"release\"\n    visual = release\nwith Path(os.environ[\"GITHUB_OUTPUT\"]).open(\"a\") as output:\n    for name, value in ((\"integration\", integration), (\"release\", release), (\"visual\", visual)):\n        output.write(f\"{name}={str(value).lower()}\\n\")\nPY_SCOPE"
         },
         {
           "name": "Set up Node",
