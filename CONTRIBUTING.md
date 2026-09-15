@@ -134,12 +134,14 @@ npm run test:gallery:visual
 ```
 
 `test:gallery:e2e` continues to include all gallery cases for the production theme
-release gate. Functional composition uses `test:gallery:functional`. Neither
-browser retries nor desktop pixel allowances are enabled. A screenshot failure
-requires inspecting expected/actual/diff images and browser/OS/font evidence.
-Do not accept new baselines or attribute differences to rasterisation without
-that diagnosis. CI retains failed comparison PNGs for seven days. A blocked
-visual gate remains blocked; functional success does not replace it.
+release gate. Functional composition uses `test:gallery:functional`. Browser
+retries are disabled. The two desktop snapshots allow at most 4,000 changed
+pixels for the measured hosted/developer macOS glyph-rasterisation difference;
+the mobile snapshots remain pixel-exact. A screenshot failure requires inspecting
+expected/actual/diff images and browser/OS/font evidence. Do not accept new
+baselines or expand the allowance without that diagnosis. CI retains failed
+comparison PNGs for seven days. A blocked visual gate remains blocked;
+functional success does not replace it.
 
 ## Public CI
 
