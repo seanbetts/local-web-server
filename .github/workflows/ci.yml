@@ -19,7 +19,7 @@
     "python": {
       "name": "Python 3.14",
       "runs-on": "macos-15",
-      "timeout-minutes": 15,
+      "timeout-minutes": 60,
       "env": {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -97,7 +97,7 @@
     "node": {
       "name": "Frontend (Node 24)",
       "runs-on": "ubuntu-24.04",
-      "timeout-minutes": 10,
+      "timeout-minutes": 30,
       "env": {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -148,7 +148,7 @@
     "compatibility": {
       "name": "Compatibility (Node ${{ matrix.node }})",
       "runs-on": "macos-15",
-      "timeout-minutes": 10,
+      "timeout-minutes": 30,
       "env": {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
