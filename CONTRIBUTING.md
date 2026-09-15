@@ -132,7 +132,7 @@ available, while keeping all configuration and runtime paths disposable.
 
 Pull requests run Python 3.14 on macOS 15 and Node 24 frontend checks on Ubuntu
 24.04. Python includes real Caddy and disposable profile/migration integration;
-the frontend job installs Chromium and runs the critical browser journeys.
+the macOS job also runs Chromium journeys and the preserved theme screenshots.
 Both use locked dependencies installed without lifecycle scripts. The packed UI
 consumer check installs the local tarball with an empty offline cache.
 
