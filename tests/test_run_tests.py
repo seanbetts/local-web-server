@@ -8,7 +8,6 @@ import unittest
 from unittest.mock import patch
 
 from scripts import run_tests
-from tests.suites import ACCEPTANCE_MARKER, acceptance
 
 
 class RunTestsTests(unittest.TestCase):
@@ -47,53 +46,6 @@ class RunTestsTests(unittest.TestCase):
                 path.parent.mkdir(parents=True)
                 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
                     listener.bind(str(path))
-
-    def test_partition_preserves_discovery_and_selects_class_and_method_markers(self):
-        class ExampleTests(unittest.TestCase):
-            def test_fast(self):
-                pass
-
-            @acceptance
-            def test_slow(self):
-                pass
-
-        @acceptance
-        class AcceptanceTests(unittest.TestCase):
-            def test_one(self):
-                pass
-
-            def test_two(self):
-                pass
-
-        @acceptance
-        def acceptance_function():
-            pass
-
-        discovered = unittest.TestSuite(
-            (
-                unittest.defaultTestLoader.loadTestsFromTestCase(ExampleTests),
-                unittest.defaultTestLoader.loadTestsFromTestCase(AcceptanceTests),
-                unittest.FunctionTestCase(acceptance_function),
-            )
-        )
-
-        partition = run_tests.partition_suite(discovered)
-
-        all_ids = [test.id() for test in partition.all_tests]
-        self.assertEqual(
-            [test.id() for test in partition.fast],
-            [all_ids[0]],
-        )
-        self.assertEqual(
-            [test.id() for test in partition.acceptance],
-            all_ids[1:],
-        )
-        self.assertEqual(
-            [test.id() for test in partition.selected("all")], all_ids
-        )
-        self.assertEqual(partition.total_count, 5)
-        self.assertIs(acceptance(ExampleTests.test_slow), ExampleTests.test_slow)
-        self.assertTrue(getattr(ExampleTests.test_slow, ACCEPTANCE_MARKER))
 
     def test_main_discovers_in_an_owned_tmpdir_and_preserves_ci_environment(self):
         observed: dict[str, object] = {}

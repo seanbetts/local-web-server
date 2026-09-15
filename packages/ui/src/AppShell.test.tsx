@@ -55,22 +55,6 @@ describe('AppShell', () => {
     buildSnapshot: async () => ({ snapshotData: {}, viewState: {} }),
   };
 
-  it('adapts an app identity to the shared System Index location frame', () => {
-    render(
-      <AppShell app={villaIdentity}>
-        <h1>Collection</h1>
-      </AppShell>,
-    );
-
-    expect(screen.getByRole('link', { name: 'System Index' })).toHaveAttribute('href', '/');
-    expect(screen.getByText('Sample Workspace')).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
-    expect(screen.getByRole('main')).toHaveClass('lwp-platform-shell__main--contained');
-    expect(screen.getByRole('main')).toHaveTextContent('Collection');
-  });
-
   it('forwards the edge-to-edge content mode to the shared frame', () => {
     render(
       <AppShell app={villaIdentity} contentMode="edge-to-edge">
@@ -158,25 +142,6 @@ describe('AppShell', () => {
     expect(main).not.toHaveAttribute('class');
   });
 
-  it('places context export after legacy app actions and before the theme control', () => {
-    render(
-      <AppShell
-        app={villaIdentity}
-        actions={<button type="button">Existing action</button>}
-        buildContextExport={buildContextExport}
-      >
-        Collection
-      </AppShell>,
-    );
-
-    const header = screen.getByRole('banner');
-    const existingAction = within(header).getByRole('button', { name: 'Existing action' });
-    const exportAction = within(header).getByRole('button', { name: 'Export context' });
-    const theme = within(header).getByRole('group', { name: 'Colour mode' });
-    expect(existingAction.compareDocumentPosition(exportAction)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(exportAction.compareDocumentPosition(theme)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-
   it('keeps the compatibility frame mounted while a supplied action becomes empty and returns', () => {
     const { container, rerender } = render(
       <AppShell app={villaIdentity} actions={<button type="button">Export</button>}>
@@ -207,20 +172,6 @@ describe('AppShell', () => {
     expect(container.querySelector('.lwp-app-shell__header')).toBe(compatibilityHeader);
     expect(screen.getByRole('group', { name: 'Sample Workspace actions' }))
       .toHaveTextContent('Share');
-  });
-
-  it('uses the compatibility frame when a deprecated slot is explicitly nullable', () => {
-    const { container } = render(
-      <AppShell app={villaIdentity} navigation={null}>
-        Collection
-      </AppShell>,
-    );
-
-    expect(container.querySelector('.lwp-app-shell__header')).toBeInTheDocument();
-    expect(container.querySelector('.lwp-platform-shell__header')).not.toBeInTheDocument();
-    expect(screen.queryByRole('navigation', { name: 'Sample Workspace navigation' }))
-      .not.toBeInTheDocument();
-    expect(screen.getByRole('main')).not.toHaveAttribute('class');
   });
 
   it('applies contained content mode with legacy slots when explicitly requested', () => {

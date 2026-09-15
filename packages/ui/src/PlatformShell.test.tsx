@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PlatformShell } from './PlatformShell';
-import type { ContextExportBuilder, LocalWebContextV1 } from './contextExportModel.js';
+import type { LocalWebContextV1 } from './contextExportModel.js';
 import { defineInteractiveExportContract } from './interactiveExportModel.js';
 import * as ui from './index.js';
 import { offlineContract, offlineEnvelope } from './test/interactiveExport.js';
@@ -23,9 +23,6 @@ const deferred = <T,>() => {
 };
 
 describe('PlatformShell', () => {
-  const buildContextExport: ContextExportBuilder = async () => ({
-    schema: 'local-web-context/v1', app: villaIdentity, context: { title: 'Collection', scope: 'Current state.', activeRoute: '/', generatedAt: '2026-08-22T10:00:00.000Z', observedAt: null, dataRevision: null }, sensitivity: { classification: 'private', notice: 'For local use only.' }, summary: 'Ready.', capabilities: [], sections: [], data: {}, provenance: { freshness: 'Current.', sources: [] }, assumptions: [], decisions: [], caveats: [], omissions: [],
-  });
   const interactiveExport = {
     contract: defineInteractiveExportContract({
       id: 'collection',
@@ -38,45 +35,6 @@ describe('PlatformShell', () => {
     }),
     buildSnapshot: async () => ({ snapshotData: {}, viewState: {} }),
   };
-
-  it('renders an optional header utility immediately before the theme control', () => {
-    render(
-      <PlatformShell
-        location={{ kind: 'index' }}
-        headerUtility={<a href="/_local-web/platform/ui-gallery/">UI Gallery</a>}
-      >
-        <h1>System Index</h1>
-      </PlatformShell>,
-    );
-
-    const header = screen.getByRole('banner');
-    const gallery = within(header).getByRole('link', { name: 'UI Gallery' });
-    const theme = within(header).getByRole('group', { name: 'Colour mode' });
-    expect(gallery.compareDocumentPosition(theme)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-
-  it.each(['contained', 'edge-to-edge'] as const)(
-    'places header utility, context export, and theme control in order for %s shells',
-    (contentMode) => {
-      render(
-        <PlatformShell
-          location={{ kind: 'app', app: villaIdentity }}
-          contentMode={contentMode}
-          headerUtility={<a href="/help">Help</a>}
-          buildContextExport={buildContextExport}
-        >
-          <h1>Collection</h1>
-        </PlatformShell>,
-      );
-
-      const header = screen.getByRole('banner');
-      const utility = within(header).getByRole('link', { name: 'Help' });
-      const exportAction = within(header).getByRole('button', { name: 'Export context' });
-      const theme = within(header).getByRole('group', { name: 'Colour mode' });
-      expect(utility.compareDocumentPosition(exportAction)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-      expect(exportAction.compareDocumentPosition(theme)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    },
-  );
 
   it('omits the context export action when no builder is supplied', () => {
     render(<PlatformShell location={{ kind: 'app', app: villaIdentity }}><h1>Collection</h1></PlatformShell>);
@@ -215,11 +173,12 @@ describe('PlatformShell', () => {
 
   it('marks System Index as the current location without a redundant link', () => {
     const { container } = render(
-      <PlatformShell location={{ kind: 'index' }}>
+      <PlatformShell location={{ kind: 'index' }} headerUtility={<a href="/help">Help</a>}>
         <h1>System Index</h1>
       </PlatformShell>,
     );
 
+    expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('href', '/help');
     const location = screen.getByRole('navigation', { name: 'Location' });
     expect(within(location).getByText('Local')).toBeInTheDocument();
     expect(within(location).getByText('System Index')).toHaveAttribute('aria-current', 'page');

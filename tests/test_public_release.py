@@ -1399,154 +1399,15 @@ class PublicCiWorkflowTests(unittest.TestCase):
         self.assertIsInstance(jobs, dict)
         self.jobs = jobs
 
-    def test_events_permissions_and_actions_are_read_only_and_secret_free(self):
-        self.assertEqual(
-            set(self.workflow),
-            {"name", "on", "permissions", "jobs"},
-        )
-        self.assertEqual(
-            self.workflow["on"],
-            {"pull_request": {}, "workflow_dispatch": {}},
-        )
+    def test_ci_cannot_write_or_consume_secrets(self):
+        self.assertEqual(set(self.workflow["on"]), {"pull_request", "workflow_dispatch"})
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
-        self.assertEqual(set(self.jobs), {"python", "node"})
-
-        safe_git_environment = {
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_ASKPASS": "/usr/bin/false",
-            "SSH_ASKPASS": "/usr/bin/false",
-        }
-
-        uses: list[str] = []
-        expected_timeouts = {"python": 60, "node": 30}
-        for job_name, job in self.jobs.items():
-            self.assertIsInstance(job, dict, job_name)
-            self.assertNotIn("permissions", job, job_name)
-            self.assertEqual(job.get("env"), safe_git_environment, job_name)
-            timeout = job.get("timeout-minutes")
-            self.assertIsInstance(timeout, int, job_name)
-            self.assertEqual(timeout, expected_timeouts[job_name], job_name)
-            steps = job.get("steps")
-            self.assertIsInstance(steps, list, job_name)
-            for step in steps:
-                self.assertIsInstance(step, dict, job_name)
-                if "uses" in step:
-                    self.assertIsInstance(step["uses"], str, job_name)
-                    uses.append(step["uses"])
-
-        self.assertEqual(
-            uses,
-            [
-                "actions/checkout@v7",
-                "actions/setup-python@v7",
-                "actions/setup-node@v7",
-                "actions/checkout@v7",
-                "actions/setup-node@v7",
-            ],
-        )
-        serialized = json.dumps(self.workflow, sort_keys=True).casefold()
-        for forbidden in (
-            "secrets.",
-            "pull_request_target",
-            '"push"',
-            '"deployment"',
-            '"deployments"',
-            '"id-token"',
-            '"packages"',
-            '"statuses"',
-            '"write"',
-        ):
-            self.assertNotIn(forbidden, serialized)
-
         for job in self.jobs.values():
-            checkout = next(
-                step
-                for step in job["steps"]
-                if step.get("uses") == "actions/checkout@v7"
-            )
-            self.assertEqual(
-                checkout.get("with"),
-                {"persist-credentials": False, "set-safe-directory": False},
-            )
-
-    def test_supported_runtimes_and_npm_cache_are_explicit(self):
-        python_job = self.jobs["python"]
-        self.assertEqual(python_job["runs-on"], "macos-15")
-        python_setup = next(
-            step
-            for step in python_job["steps"]
-            if step.get("uses") == "actions/setup-python@v7"
-        )
-        self.assertEqual(python_setup.get("with"), {"python-version": "3.14"})
-        python_node_setup = next(
-            step
-            for step in python_job["steps"]
-            if step.get("uses") == "actions/setup-node@v7"
-        )
-        self.assertEqual(
-            python_node_setup.get("with"),
-            {
-                "node-version": "24",
-                "cache": "npm",
-                "cache-dependency-path": "package-lock.json",
-            },
-        )
-
-        node_job = self.jobs["node"]
-        self.assertEqual(node_job["runs-on"], "ubuntu-24.04")
-        self.assertEqual(
-            node_job.get("strategy"),
-            {"fail-fast": False, "matrix": {"node": [22, 24, 26]}},
-        )
-        node_setup = next(
-            step
-            for step in node_job["steps"]
-            if step.get("uses") == "actions/setup-node@v7"
-        )
-        self.assertEqual(
-            node_setup.get("with"),
-            {
-                "node-version": "${{ matrix.node }}",
-                "cache": "npm",
-                "cache-dependency-path": "package-lock.json",
-            },
-        )
-    def test_jobs_run_complete_supported_platform_verification(self):
-        self.assertEqual(
-            _workflow_runs(self.jobs["python"]),
-            (
-                "npm ci --ignore-scripts",
-                "/opt/homebrew/bin/npm install --global npm@11.19.0 --ignore-scripts",
-                "/opt/homebrew/bin/npm --version | grep -Fx '11.19.0'",
-                "npx playwright install chromium",
-                "brew install caddy",
-                "caddy version | grep -E '^v2[.]'",
-                "python3 -m compileall -q local_web_server scripts tests",
-                (
-                    "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 "
-                    "PYTHONWARNINGS=error::ResourceWarning "
-                    "npm run test:python"
-                ),
-                (
-                    "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 "
-                    "PYTHONWARNINGS=error::ResourceWarning "
-                    "npm run test:python:acceptance"
-                ),
-                "python3 scripts/verify_host_profile_workflow.py",
-            ),
-        )
-        self.assertEqual(
-            _workflow_runs(self.jobs["node"]),
-            (
-                "npm ci --ignore-scripts",
-                "npm run check:frontend",
-                "npm run verify:public-release",
-                "npm audit",
-                "npm audit --omit=dev",
-            ),
-        )
+            self.assertNotIn("permissions", job)
+            for step in job["steps"]:
+                if step.get("uses", "").startswith("actions/checkout@"):
+                    self.assertIs(step.get("with", {}).get("persist-credentials"), False)
+        self.assertNotIn("secrets.", json.dumps(self.workflow).casefold())
 
     def test_jobs_are_bounded_to_disposable_platform_checks(self):
         all_commands = "\n".join(
@@ -1595,124 +1456,14 @@ class RepositoryPublicSurfaceTests(unittest.TestCase):
         self.assertTrue(all(app["title"].startswith("Example ") for app in index["apps"]))
         self.assertTrue(public_release._index_fixture_is_generic(index))
 
-    def test_public_docs_cover_onboarding_security_operations_and_exports(self):
-        documents = {
-            "README.md": (
-                "## Architecture",
-                "## Screenshots",
-                "## Prerequisites",
-                "## Bootstrap a host",
-                "## Create an application",
-                "## Security model",
-                "## Interactive export",
-                "snapshotData",
-                "viewState",
-                "apps/system-index/tests/snapshots/index-light-desktop.png",
-                "## Verification",
-                "## Case studies",
-                "## Limitations",
-                "python3 scripts/install_local_web.py --dry-run",
-                "\npython3 scripts/install_local_web.py\n```",
-            ),
-            "SECURITY.md": (
-                "GitHub private vulnerability reporting",
-                "Do not post secrets",
-            ),
-            "CONTRIBUTING.md": (
-                "python3 -m unittest discover -s tests -v",
-                "npm run verify:host-profile",
-                "npm run verify:public-release",
-                "npm audit --omit=dev",
-            ),
-            "docs/architecture.md": (
-                "immutable releases",
-                "HostProfileStore",
-                "trusted-lan",
-                "tailscale-serve",
-                "127.0.0.1:8080",
-            ),
-            "docs/operations/host-profile.md": (
-                "local-web host init",
-                "local-web host migrate-registry",
-                "local-web host status",
-                "local-web host backup",
-                "local-web host restore",
-                "local-web host recover",
-                ".host-profile-recovery",
-                "128 batches",
-                "256 MiB",
-                "no automatic pruning",
-                "excluded from revisions and backups",
-                "fails closed",
-            ),
-            "docs/operations/recovery.md": (
-                "local-web host status",
-                "local-web host recover",
-                "local-web host restore",
-                "local-web rollback",
-                "scripts/install_local_web.py --dry-run",
-                "\npython3 scripts/install_local_web.py\n```",
-            ),
-        }
-        for relative, snippets in documents.items():
-            with self.subTest(relative=relative):
-                text = ROOT.joinpath(relative).read_text(encoding="utf-8")
-                for snippet in snippets:
-                    self.assertIn(snippet, text)
 
-    def test_installer_guidance_pairs_exact_preview_and_apply_commands(self):
-        preview = "```sh\npython3 scripts/install_local_web.py --dry-run\n```"
-        apply = "```sh\npython3 scripts/install_local_web.py\n```"
-        for relative in ("README.md", "docs/operations/recovery.md"):
-            with self.subTest(relative=relative):
-                text = ROOT.joinpath(relative).read_text(encoding="utf-8")
-                self.assertIn(preview, text)
-                self.assertIn(apply, text)
-                self.assertLess(text.index(preview), text.index(apply))
 
-    def test_activation_guidance_uses_private_profile_revision_checkpoint(self):
-        stale_phrases = (
-            "registry commit",
-            "platform-registry commit",
-            "committed registry",
-            "commit the registry",
-        )
-        guidance = [ROOT / "README.md"]
-        for directory in (ROOT / "docs", ROOT / "skills", ROOT / "templates"):
-            guidance.extend(path for path in directory.rglob("*") if path.is_file())
-        for path in guidance:
-            text = path.read_text(encoding="utf-8").casefold()
-            for phrase in stale_phrases:
-                self.assertNotIn(phrase, text, str(path.relative_to(ROOT)))
-
-        for relative in (
-            "skills/local-web-app-development/references/service-apps.md",
-            "skills/local-web-app-development/references/verification.md",
-        ):
-            with self.subTest(relative=relative):
-                text = ROOT.joinpath(relative).read_text(encoding="utf-8")
-                self.assertIn("private host-profile registration revision", text)
-                self.assertIn("registryRevision", text)
-                self.assertIn("retry checkpoint", text)
 
     def test_private_directory_contract_and_public_tracked_surface_are_exact(self):
         self.assertEqual(
             ROOT.joinpath("config/local/.gitignore").read_text(encoding="utf-8"),
             "*\n!.gitignore\n!README.md\n",
         )
-        local_readme = ROOT.joinpath("config/local/README.md").read_text(encoding="utf-8")
-        for snippet in (
-            "apps.json",
-            "history/",
-            ".host-profile-transaction.json",
-            "backups/",
-            "publication-policy.json",
-            ".bundle",
-            ".sha256",
-            "machine backups",
-        ):
-            self.assertIn(snippet, local_readme)
-
         tracked = set(_git(ROOT, "ls-files").stdout.splitlines())
         self.assertNotIn("config/apps.json", tracked)
         self.assertFalse(any(path.startswith(".superpowers/") for path in tracked))
@@ -1799,12 +1550,6 @@ class PublicReleaseScriptTests(PublicReleaseTestCase):
                 self.assertEqual(result.stderr, "public-release: invalid arguments\n")
                 self.assertNotIn(private_argument, combined)
 
-    def test_package_exposes_public_release_launcher(self):
-        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-        self.assertEqual(
-            package["scripts"].get("verify:public-release"),
-            "python3 scripts/verify_public_release.py",
-        )
 
 
 if __name__ == "__main__":

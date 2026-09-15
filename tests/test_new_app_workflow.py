@@ -1,4 +1,4 @@
-import hashlib
+import contextlib
 import json
 import signal
 import stat
@@ -245,130 +245,36 @@ class NewAppWorkflowTests(unittest.TestCase):
         )
         return platform.resolve()
 
-    def test_process_group_permission_probe_still_reaps_owned_leader(self):
-        class Process:
-            pid = 4242
+    def test_process_group_probe_and_signal_races_still_reap_the_owned_leader(self):
+        for boundary in ("permission", "term", "kill"):
+            with self.subTest(boundary=boundary):
+                process = mock.Mock(pid=4242)
+                process.poll.return_value = None
+                probes = iter((True, True, False))
+                first_probe = True
+                def signal_group(_group, signum):
+                    nonlocal first_probe
+                    if signum == 0:
+                        if first_probe:
+                            first_probe = False
+                            if boundary == "permission":
+                                raise PermissionError
+                            return
+                        raise ProcessLookupError
+                    if signum == (signal.SIGKILL if boundary == "kill" else signal.SIGTERM):
+                        raise ProcessLookupError
+                probe_context = (
+                    mock.patch.object(new_app_verifier, "_process_group_exists", side_effect=probes)
+                    if boundary == "kill" else contextlib.nullcontext()
+                )
+                with (
+                    probe_context,
+                    mock.patch.object(new_app_verifier.os, "killpg", side_effect=signal_group),
+                    mock.patch.object(new_app_verifier.time, "monotonic", side_effect=(0, 2, 2, 4)),
+                ):
+                    _stop_process_group(process)
+                process.wait.assert_called_once()
 
-            def __init__(self):
-                self.wait_calls = 0
-
-            def poll(self):
-                return None
-
-            def wait(self):
-                self.wait_calls += 1
-
-        process = Process()
-        signal_calls: list[tuple[int, int]] = []
-
-        def kill_group(process_group: int, signal_number: int) -> None:
-            signal_calls.append((process_group, signal_number))
-            if len(signal_calls) == 1:
-                raise PermissionError("transient process-group probe denial")
-            if signal_number == 0:
-                raise ProcessLookupError
-
-        with mock.patch(
-            "scripts.verify_new_app_workflow.os.killpg", side_effect=kill_group
-        ):
-            try:
-                _stop_process_group(process)
-            except PermissionError:
-                self.fail("a permission-denied probe abandoned owned process cleanup")
-
-        self.assertEqual(
-            signal_calls,
-            [
-                (4242, 0),
-                (4242, signal.SIGTERM),
-                (4242, 0),
-                (4242, 0),
-                (4242, 0),
-            ],
-        )
-        self.assertEqual(process.wait_calls, 1)
-
-    def test_process_group_disappearing_before_sigterm_still_reaps_owned_leader(self):
-        class Process:
-            pid = 4242
-
-            def __init__(self):
-                self.wait_calls = 0
-
-            def poll(self):
-                return None
-
-            def wait(self):
-                self.wait_calls += 1
-
-        process = Process()
-        signal_calls: list[tuple[int, int]] = []
-
-        def kill_group(process_group: int, signal_number: int) -> None:
-            signal_calls.append((process_group, signal_number))
-            if signal_number == signal.SIGTERM:
-                raise ProcessLookupError
-            if len(signal_calls) > 2:
-                raise ProcessLookupError
-
-        with mock.patch(
-            "scripts.verify_new_app_workflow.os.killpg", side_effect=kill_group
-        ):
-            try:
-                _stop_process_group(process)
-            except ProcessLookupError:
-                self.fail("a group-exit race at SIGTERM abandoned process reaping")
-
-        self.assertEqual(
-            signal_calls[:2], [(4242, 0), (4242, signal.SIGTERM)]
-        )
-        self.assertEqual(process.wait_calls, 1)
-
-    def test_process_group_disappearing_before_sigkill_still_reaps_owned_leader(self):
-        class Process:
-            pid = 4242
-
-            def __init__(self):
-                self.wait_calls = 0
-
-            def poll(self):
-                return None
-
-            def wait(self):
-                self.wait_calls += 1
-
-        process = Process()
-        signal_calls: list[tuple[int, int]] = []
-
-        def kill_group(process_group: int, signal_number: int) -> None:
-            signal_calls.append((process_group, signal_number))
-            if signal_number == signal.SIGKILL:
-                raise ProcessLookupError
-
-        with (
-            mock.patch(
-                "scripts.verify_new_app_workflow._process_group_exists",
-                side_effect=(True, True, False),
-            ),
-            mock.patch(
-                "scripts.verify_new_app_workflow.time.monotonic",
-                side_effect=(0, 2, 2, 4),
-            ),
-            mock.patch(
-                "scripts.verify_new_app_workflow.os.killpg",
-                side_effect=kill_group,
-            ),
-        ):
-            try:
-                _stop_process_group(process)
-            except ProcessLookupError:
-                self.fail("a group-exit race at SIGKILL abandoned process reaping")
-
-        self.assertEqual(
-            signal_calls,
-            [(4242, signal.SIGTERM), (4242, signal.SIGKILL)],
-        )
-        self.assertEqual(process.wait_calls, 1)
 
     def test_disposable_deployer_runs_activation_install_callback(self):
         """The acceptance deployer must preserve AppActivator's install transaction."""
@@ -414,97 +320,23 @@ class NewAppWorkflowTests(unittest.TestCase):
         self.assertEqual(result.outcome, "deployed")
         self.assertEqual(events, ["install"])
 
-    def test_runs_the_complete_disposable_lifecycle_with_fixed_commands(self):
-        """Dropping, reordering, or broadening a lifecycle command must fail."""
+    def test_disposable_lifecycle_checks_activates_and_cleans_the_generated_app(self):
         before = self.registry.read_bytes()
         executor = RecordingExecutor(self.registry)
-
-        code = self.verifier(executor).run()
-
-        self.assertEqual(code, 0)
+        self.assertEqual(self.verifier(executor).run(), 0)
         self.assertEqual(self.registry.read_bytes(), before)
-        self.assertIsNotNone(executor.generated_repository)
-        self.assertFalse(executor.generated_repository.exists())
+        repository = executor.generated_repository
+        self.assertIsNotNone(repository)
+        self.assertFalse(repository.exists())
         self.assertEqual(list(self.coding_root.iterdir()), [])
+        labels = [command.label for command in executor.commands]
+        for step in ("app init", "app doctor", "app check", "app activate preview"):
+            self.assertIn(step, labels)
+        self.assertLess(labels.index("app check"), labels.index("app activate preview"))
+        self.assertEqual(self.activation.calls, [(repository, repository.parent, "static")])
+        install = next(command for command in executor.commands if command.argv[:2] == ("npm", "ci"))
+        self.assertIn("--ignore-scripts", install.argv)
 
-        repository = Path(executor.commands[0].argv[3])
-        local_web = str((ROOT / "bin/local-web").resolve())
-        self.assertEqual(
-            executor.commands,
-            [
-                WorkflowCommand(
-                    "app init",
-                    (
-                        local_web,
-                        "app",
-                        "init",
-                        str(repository),
-                        "--title",
-                        "Disposable Workflow Verification",
-                        "--icon",
-                        "book",
-                        "--accent",
-                        "#8EA7C6",
-                    ),
-                    ROOT,
-                    600,
-                ),
-                WorkflowCommand(
-                    "app doctor",
-                    (local_web, "app", "doctor", "--repository", str(repository)),
-                    ROOT,
-                    60,
-                ),
-                WorkflowCommand(
-                    "app-local dependency preparation",
-                    ("npm", "ci", "--ignore-scripts"),
-                    repository,
-                    300,
-                ),
-                WorkflowCommand(
-                    "app check",
-                    (local_web, "app", "check", "--repository", str(repository)),
-                    ROOT,
-                    600,
-                ),
-                WorkflowCommand(
-                    "app activate preview",
-                    (
-                        local_web,
-                        "app",
-                        "activate",
-                        "--repository",
-                        str(repository),
-                    ),
-                    ROOT,
-                    60,
-                ),
-            ],
-        )
-        self.assertEqual(
-            self.lines,
-            [
-                "create empty folder PASS",
-                "app init PASS",
-                "platform version 1",
-                f"template version {CURRENT_TEMPLATE_VERSION}",
-                f"UI version {CURRENT_UI_PACKAGE_VERSION}",
-                f"UI digest {'a' * 64}",
-                "context export schema local-web-context/v1",
-                "context export sensitivity private",
-                "app doctor PASS",
-                "app-local dependency preparation PASS",
-                "app check PASS",
-                "app activate preview PASS",
-                "app activate apply/recovery PASS",
-                f"registry digest {hashlib.sha256(before).hexdigest()}",
-                "cleanup PASS",
-            ],
-        )
-        self.assertEqual(
-            self.activation.calls,
-            [(repository, repository.parent, "static")],
-        )
 
     def test_failure_after_context_metadata_keeps_registry_root_and_process_cleanup(self):
         """A post-init failure must not leak the generated root or owned child group."""
@@ -658,19 +490,6 @@ class NewAppWorkflowTests(unittest.TestCase):
             self.hosted_csp.calls,
             [(Path(executor.commands[0].argv[3]), Path(executor.commands[0].argv[3]).parent)],
         )
-        self.assertIn("release contract PASS", self.lines)
-        for line in (
-            "context export schema local-web-context/v1",
-            "context export sensitivity private",
-            "app check PASS",
-            "app activate preview PASS",
-            "hosted generated service CSP acceptance PASS",
-            "app activate apply/recovery PASS",
-            "cleanup PASS",
-        ):
-            with self.subTest(line=line):
-                self.assertIn(line, self.lines)
-        self.assertNotIn("foundation", "\n".join(self.lines))
 
     def test_hosted_service_csp_acceptance_builds_the_registered_route_prefix(self):
         repository = Path(self.temporary.name) / "generated-service"

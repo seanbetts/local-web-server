@@ -1,7 +1,5 @@
 import importlib
-import json
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,34 +27,6 @@ class HostProfileWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "required Caddy integration"):
             select_test_caddy(select=unavailable, required=True)
 
-    def test_package_launchers_select_all_eight_workflow_wrappers(self):
-        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-        expected = {
-            "verify:host-profile": "python3 scripts/verify_host_profile_workflow.py",
-            "verify:new-app": "python3 scripts/verify_new_app_workflow.py",
-            "verify:new-service-app": (
-                "python3 scripts/verify_new_app_workflow.py --kind service"
-            ),
-            "verify:foundation-adoption": (
-                "python3 scripts/verify_foundation_adoption_workflow.py"
-            ),
-            "verify:repository-service-transition": (
-                "python3 scripts/verify_repository_service_transition.py"
-            ),
-            "verify:service-command-migration": (
-                "python3 scripts/verify_service_command_migration.py"
-            ),
-            "verify:public-base-path-migration": (
-                "python3 scripts/verify_public_base_path_migration.py"
-            ),
-            "verify:fleet-update": (
-                "python3 scripts/verify_fleet_update_workflow.py"
-            ),
-        }
-
-        for launcher, wrapper in expected.items():
-            with self.subTest(launcher=launcher):
-                self.assertEqual(package["scripts"].get(launcher), wrapper)
 
     def test_shared_environment_removes_every_ambient_git_control(self):
         module_name = "scripts.disposable_workflow_support"

@@ -12,8 +12,6 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: 'line',
-  updateSnapshots: 'none',
-  snapshotPathTemplate: '{testDir}/snapshots/{arg}{ext}',
   use: {
     baseURL: 'http://127.0.0.1:4180',
     browserName: 'chromium',

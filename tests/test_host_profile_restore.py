@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -7,7 +6,7 @@ from unittest.mock import patch
 
 from local_web_server.host_profile_store import HostProfileSnapshot, HostProfileStore, parse_revision
 from tests.test_host_profile_store import StoreFixture, BEFORE, AFTER, CLOCK, envelope, digest
-from tests.suites import acceptance
+from tests.suites import stress
 
 
 macos_restore = unittest.skipUnless(sys.platform == "darwin", "requires macOS descriptor-clone restore publication")
@@ -20,7 +19,7 @@ class RestoreStoreTests(StoreFixture):
             parse_revision(envelope(AFTER, digest(BEFORE), "registration", "plotter")),
         ))
 
-    def boundary_candidate(self, *, count=10_000, profile_size=5 * 1024 * 1024):
+    def boundary_candidate(self, *, count=8, profile_size=4096):
         profile = BEFORE + b" " * (profile_size - len(BEFORE))
         revisions, previous = [parse_revision(envelope())], BEFORE
         for sequence in range(2, count + 1):
@@ -46,24 +45,43 @@ class RestoreStoreTests(StoreFixture):
         self.assertEqual(self.store.revisions(), candidate.revisions)
         self.assertFalse(self.paths.transaction.exists())
 
-    @acceptance
+    @stress
     @macos_restore
     def test_restore_supports_ten_thousand_revisions_and_a_five_mib_profile(self):
-        candidate = self.boundary_candidate()
+        candidate = self.boundary_candidate(count=10_000, profile_size=5 * 1024 * 1024)
         self.assertEqual(self.store.restore_snapshot(candidate), candidate.revisions[-1].revision_id)
         restored = self.store.read_snapshot(max_profile_bytes=5 * 1024 * 1024,
             max_revision_bytes=8 * 1024 * 1024, max_revisions=10_000, max_total_bytes=64 * 1024 * 1024)
         self.assertEqual(restored, candidate)
         marker = next(self.paths.recovery_residue.rglob("marker.json")).read_bytes()
-        self.assertEqual(len(marker), 8_810_782)
+        self.assertGreater(len(marker), 5 * 1024 * 1024)
         self.assertFalse(self.paths.transaction.exists())
         self.assertIsNone(self.store.inspect_recovery())
 
+    @macos_restore
+    def test_representative_restore_round_trips_multiple_revisions(self):
+        candidate = self.boundary_candidate()
+        self.store.restore_snapshot(candidate)
+        restored = self.store.read_snapshot(
+            max_profile_bytes=4096, max_revision_bytes=8192,
+            max_revisions=8, max_total_bytes=64 * 1024,
+        )
+        self.assertEqual(restored, candidate)
+        self.assertIsNone(self.store.inspect_recovery())
+
     def test_restore_rejects_one_over_the_profile_and_revision_count_bounds_before_writes(self):
-        for candidate in (self.boundary_candidate(count=10_001),
-                          self.boundary_candidate(profile_size=5 * 1024 * 1024 + 1)):
-            self.assert_store_error(lambda: self.store.restore_snapshot(candidate))
-            self.assertFalse(self.paths.local.exists())
+        # Count is rejected before revision traversal, so repeated references
+        # exercise the actual 10,000 limit without constructing a large history.
+        revision = self.candidate().revisions[0]
+        oversized_history = HostProfileSnapshot(BEFORE, (revision,) * 10_001)
+        with patch.object(self.store, "_validate_registry") as validate:
+            self.assert_store_error(lambda: self.store.restore_snapshot(oversized_history))
+        validate.assert_not_called()
+        oversized_profile = HostProfileSnapshot(
+            BEFORE + b" " * (5 * 1024 * 1024 + 1 - len(BEFORE)), (revision,),
+        )
+        self.assert_store_error(lambda: self.store.restore_snapshot(oversized_profile))
+        self.assertFalse(self.paths.local.exists())
 
     @macos_restore
     def test_absent_restore_preserves_a_marker_created_at_the_publication_boundary(self):

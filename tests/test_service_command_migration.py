@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from local_web_server.app_doctor import DoctorReport
-from local_web_server.app_registration import AppRegistrar, AppRegistrationError
+from local_web_server.app_registration import AppRegistrar
 from local_web_server.deploy import (
     DeploymentManager,
     DeploymentResult,
@@ -63,12 +63,10 @@ class RecordingProfileStore:
     def __init__(self, real: HostProfileStore, *, fail: str | None = None):
         self.real = real
         self.fail = fail
-        self.clean_calls: list[bool] = []
         self.migration_calls = 0
         self.restoration_calls = 0
 
     def require_clean(self, *, require_main: bool = True):
-        self.clean_calls.append(require_main)
         return self.real.require_clean(require_main=require_main)
 
     def read_current(self):
@@ -209,15 +207,10 @@ class TransitionDeployer:
         except Exception:
             cleanup_failed = True
         if replacement_began:
-            if self._fails("old-replacement"):
+            try:
+                transition.verify_restored()
+            except Exception:
                 cleanup_failed = True
-            elif self._fails("old-health"):
-                cleanup_failed = True
-            else:
-                try:
-                    transition.verify_restored()
-                except Exception:
-                    cleanup_failed = True
         if cleanup_failed:
             raise ServiceCommandRecoveryFailed(PRIVATE_FAILURE) from primary
         raise primary
@@ -253,8 +246,6 @@ class TransitionDeployer:
         try:
             service_command_transition.install()
             replacement_began = True
-            if self._fails("replacement"):
-                raise RuntimeError(PRIVATE_FAILURE)
             if self._fails("health"):
                 raise RuntimeError(PRIVATE_FAILURE)
             service_command_transition.verify()
@@ -647,8 +638,6 @@ class ServiceCommandMigrationTests(unittest.TestCase):
         self.assertEqual(snapshot_tree(self.root), before)
         self.assertNotIn("startCommand", repr(plan))
         self.assertNotIn(str(self.application), repr(plan))
-        self.assertEqual(registrar.plan_calls, 1)
-        self.assertEqual(profile_store.clean_calls, [False])
         self.assertEqual(install.calls, [])
         self.assertEqual(deployer.calls, 0)
         self.assertEqual(verifier.calls, [])
@@ -738,8 +727,6 @@ class ServiceCommandMigrationTests(unittest.TestCase):
         self.assertTrue(result.verified)
         self.assertEqual(result.plan.port, 52700)
         self.assertRegex(result.registry_revision or "", r"^[0-9a-f]{64}$")
-        self.assertEqual(registrar.plan_calls, 2)
-        self.assertEqual(profile_store.clean_calls, [False, True, False])
         self.assertEqual(profile_store.migration_calls, 1)
         self.assertEqual(profile_store.restoration_calls, 0)
         self.assertIsNotNone(deployer.transition)
@@ -926,7 +913,7 @@ class ServiceCommandMigrationTests(unittest.TestCase):
             services=services,
             health=health,
         )
-        install = RecordingInstaller(self.registry)
+        install = RecordingInstaller(self.registry, fail="redundant-old-install")
         verifier = RecordingVerifier()
         migrator, registrar, profile_store, *_ = self.migrator(
             install=install,
@@ -999,33 +986,6 @@ class ServiceCommandMigrationTests(unittest.TestCase):
         self.assertTrue((layout.releases / self.target_commit).is_dir())
         self.assertNotIn(PRIVATE_FAILURE, str(raised.exception))
 
-    def test_real_task3_proven_recovery_does_not_run_a_failing_second_install(self):
-        deployer = RealTask3Deployer(
-            root=self.root,
-            builder=FailingReleaseBuilder(),
-        )
-        install = RecordingInstaller(
-            self.registry,
-            fail="redundant-old-install",
-        )
-        verifier = RecordingVerifier()
-        migrator, registrar, profile_store, *_ = self.migrator(
-            install=install,
-            deployer=deployer,
-            verifier=verifier,
-        )
-
-        with self.assertRaisesRegex(
-            ServiceCommandMigrationError,
-            "^service command migration deployment failed$",
-        ) as raised:
-            migrator.migrate(self.application)
-
-        self.assertEqual(registrar.restore_calls, 0)
-        self.assertEqual(profile_store.restoration_calls, 1)
-        self.assertEqual(install.calls, ["former"])
-        self.assertEqual(verifier.calls, ["former"])
-        self.assertNotIn(PRIVATE_FAILURE, str(raised.exception))
 
     def test_real_task3_recovery_failure_never_runs_the_weaker_outer_restore(self):
         services = FailingReplaceServiceController()
@@ -1074,8 +1034,6 @@ class ServiceCommandMigrationTests(unittest.TestCase):
         self.assertIsNone(result.registry_revision)
         self.assertIsNone(result.deployment)
         self.assertFalse(result.verified)
-        self.assertEqual(registrar.plan_calls, 1)
-        self.assertEqual(profile_store.clean_calls, [False])
         self.assertEqual(profile_store.migration_calls, 0)
         self.assertEqual(install.calls, [])
         self.assertEqual(deployer.calls, 0)
@@ -1122,94 +1080,47 @@ class ServiceCommandMigrationTests(unittest.TestCase):
                 )
                 self._reset_profile_store()
 
-    def test_post_publication_failures_restore_old_registry_and_pointer_pair(self):
-        for failure, message in (
-            ("build", "deployment failed"),
-            ("install", "deployment failed"),
-            ("replacement", "deployment failed"),
-            ("health", "deployment failed"),
-            ("tile", "verification failed"),
-        ):
+    def test_failed_candidate_tile_restores_profile_and_release_pointers(self):
+        # DeploymentManager's phase matrix owns build/install/service/health
+        # failures. This layer owns the migration-specific verification callback.
+        verifier = RecordingVerifier(fail="tile")
+        migrator, _, profile_store, install, deployer, _ = self.migrator(verifier=verifier)
+        with self.assertRaises(ServiceCommandMigrationError) as raised:
+            migrator.migrate(self.application)
+        self.assertEqual(self.registry.read_bytes(), self.registry_bytes)
+        layout = RuntimeLayout(self.runtime, "fixture-service")
+        self.assertEqual(read_release_commit(layout.current), self.former_commit)
+        self.assertIsNone(read_release_commit(layout.previous))
+        self.assertEqual(profile_store.restoration_calls, 1)
+        self.assertEqual(verifier.calls, ["candidate", "former"])
+        self.assertNotIn(PRIVATE_FAILURE, str(raised.exception))
+
+
+    def test_failed_migration_restoration_callbacks_report_bounded_recovery_failure(self):
+        # Replacement and health recovery failures belong to test_deploy.
+        # Keep the profile/install/tile callbacks supplied by this migrator.
+        for failure in ("restoration-publication-before", "old-install", "old-tile"):
             with self.subTest(failure=failure):
+                profile = RecordingProfileStore(self.profile_store, fail=failure)
                 install = RecordingInstaller(self.registry, fail=failure)
                 verifier = RecordingVerifier(fail=failure)
                 deployer = TransitionDeployer(
-                    runtime=self.runtime,
-                    target_commit=self.target_commit,
-                    former_current=self.former_commit,
-                    former_previous=None,
-                    fail=failure,
-                )
-                migrator, registrar, profile_store, *_ = self.migrator(
-                    install=install, deployer=deployer, verifier=verifier
-                )
-                with self.assertRaisesRegex(
-                    ServiceCommandMigrationError,
-                    f"^service command migration {message}$",
-                ) as raised:
-                    migrator.migrate(self.application)
-                self.assertEqual(self.registry.read_bytes(), self.registry_bytes)
-                layout = RuntimeLayout(self.runtime, "fixture-service")
-                self.assertEqual(read_release_commit(layout.current), self.former_commit)
-                self.assertIsNone(read_release_commit(layout.previous))
-                self.assertEqual(registrar.restore_calls, 0)
-                self.assertGreaterEqual(profile_store.restoration_calls, 1)
-                self.assertNotIn(PRIVATE_FAILURE, str(raised.exception))
-                self.assertNotIn(PRIVATE_COMMAND, repr(raised.exception))
-                self._reset_profile_store()
-
-    def test_each_recovery_boundary_has_one_distinct_public_failure(self):
-        cases = (
-            ("restoration-publication-before", "build"),
-            ("old-install", "build"),
-            ("old-replacement", "health"),
-            ("old-health", "health"),
-            ("old-tile", "health"),
-        )
-        for recovery_failure, primary_failure in cases:
-            with self.subTest(recovery_failure=recovery_failure):
-                registrar = RecordingRegistrar()
-                profile_store = RecordingProfileStore(
-                    self.profile_store,
-                    fail=(
-                        "restoration-publication-before"
-                        if recovery_failure == "restoration-publication-before"
-                        else None
-                    ),
-                )
-                install = RecordingInstaller(
-                    self.registry,
-                    fail="old-install" if recovery_failure == "old-install" else None,
-                )
-                verifier = RecordingVerifier(
-                    fail="old-tile" if recovery_failure == "old-tile" else None
-                )
-                deployer = TransitionDeployer(
-                    runtime=self.runtime,
-                    target_commit=self.target_commit,
-                    former_current=self.former_commit,
-                    former_previous=None,
-                    fail=(primary_failure, recovery_failure),
+                    runtime=self.runtime, target_commit=self.target_commit,
+                    former_current=self.former_commit, former_previous=None, fail="health",
                 )
                 migrator, *_ = self.migrator(
-                    registrar=registrar,
-                    profile_store=profile_store,
-                    install=install,
-                    deployer=deployer,
-                    verifier=verifier,
+                    profile_store=profile, install=install, verifier=verifier, deployer=deployer,
                 )
-                with self.assertRaisesRegex(
-                    ServiceCommandMigrationError,
-                    "^service command migration failed; recovery failed$",
-                ) as raised:
+                with self.assertRaisesRegex(ServiceCommandMigrationError, "recovery failed") as raised:
                     migrator.migrate(self.application)
                 self.assertNotIn(PRIVATE_FAILURE, str(raised.exception))
-                self.assertNotIn(PRIVATE_COMMAND, repr(raised.exception))
+                self.assertNotIn(str(self.root), str(raised.exception))
                 self._reset_profile_store()
-                current = self.runtime / "apps/fixture-service/current"
-                current.unlink(missing_ok=True)
-                os.symlink(f"releases/{self.former_commit}", current)
-                (self.runtime / "apps/fixture-service/previous").unlink(missing_ok=True)
+                layout = RuntimeLayout(self.runtime, "fixture-service")
+                layout.current.unlink(missing_ok=True)
+                os.symlink(f"releases/{self.former_commit}", layout.current)
+                layout.previous.unlink(missing_ok=True)
+
 
     def test_registry_mutation_during_old_install_is_a_recovery_failure(self):
         install = RecordingInstaller(

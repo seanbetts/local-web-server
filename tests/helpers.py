@@ -6,6 +6,7 @@ from pathlib import Path
 
 from local_web_server.services import HealthResult, ServiceState
 from scripts import verify_host_profile_workflow as profile_verifier
+from tests.suites import acceptance
 
 
 def select_test_caddy(
@@ -24,7 +25,8 @@ def select_test_caddy(
 
 
 TEST_CADDY = select_test_caddy()
-caddy_integration = unittest.skipUnless(TEST_CADDY is not None, "requires Caddy 2")
+def caddy_integration(test):
+    return acceptance(unittest.skipUnless(TEST_CADDY is not None, "requires Caddy 2")(test))
 
 
 class FakeServiceController:

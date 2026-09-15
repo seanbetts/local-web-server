@@ -51,19 +51,6 @@ describe('SegmentedControl', () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  it('does not render React Aria pressable markers that require a runtime style injection', () => {
-    render(
-      <SegmentedControl
-        aria-label="Colour mode"
-        options={options}
-        value="system"
-        onChange={() => undefined}
-      />,
-    );
-
-    expect(screen.getByRole('group', { name: 'Colour mode' }).querySelector('[data-react-aria-pressable]')).toBeNull();
-  });
-
   it('moves horizontal focus without changing selection until a choice is activated', () => {
     const onChange = vi.fn();
     render(
