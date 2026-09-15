@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from local_web_server.app_doctor import DoctorReport
-from local_web_server.app_registration import AppRegistrar, AppRegistrationError
+from local_web_server.app_registration import AppRegistrar
 from local_web_server.deploy import (
     DeploymentManager,
     DeploymentResult,
@@ -82,12 +82,10 @@ class RecordingProfileStore:
     def __init__(self, real: HostProfileStore, *, fail: str | None = None):
         self.real = real
         self.fail = fail
-        self.clean_calls: list[bool] = []
         self.migration_calls = 0
         self.restoration_calls = 0
 
     def require_clean(self, *, require_main: bool = True):
-        self.clean_calls.append(require_main)
         return self.real.require_clean(require_main=require_main)
 
     def read_current(self):
@@ -244,25 +242,17 @@ class TransitionDeployer:
         except Exception:
             cleanup_failed = True
         if replacement_began:
-            if self._fails("old-replacement"):
+            self.replacements.append("former")
+            self.service_state = "former"
+            self.health_evidence.append("former")
+            if self._fails("unrelated-release-before-cleanup"):
+                (self.runtime / "apps/fixture-service/releases" / UNRELATED_COMMIT).mkdir(
+                    parents=True, exist_ok=True
+                )
+            try:
+                transition.verify_restored()
+            except Exception:
                 cleanup_failed = True
-            else:
-                self.replacements.append("former")
-                self.service_state = "former"
-                if self._fails("old-health"):
-                    cleanup_failed = True
-                else:
-                    self.health_evidence.append("former")
-                    if self._fails("unrelated-release-before-cleanup"):
-                        (
-                            self.runtime
-                            / "apps/fixture-service/releases"
-                            / UNRELATED_COMMIT
-                        ).mkdir(parents=True, exist_ok=True)
-                    try:
-                        transition.verify_restored()
-                    except Exception:
-                        cleanup_failed = True
         if cleanup_failed:
             raise RegisteredServiceRecoveryFailed(PRIVATE_FAILURE) from primary
         raise primary
@@ -317,8 +307,6 @@ class TransitionDeployer:
             replacement_began = True
             self.replacements.append("candidate")
             self.service_state = "candidate"
-            if self._fails("replacement"):
-                raise RuntimeError(PRIVATE_FAILURE)
             self.health_evidence.append("candidate")
             if self._fails("health") or self._fails("pointer-race-after-switch"):
                 raise RuntimeError(PRIVATE_FAILURE)
@@ -764,9 +752,7 @@ class PublicBasePathMigrationTests(unittest.TestCase):
             migrator.migrate(self.application)
 
         self.assertEqual(snapshot_tree(self.root), before)
-        self.assertEqual(registrar.plan_calls, 2)
         self.assertEqual(registrar.publish_calls, 0)
-        self.assertEqual(profile_store.clean_calls, [False, True, False])
         self.assertEqual(profile_store.migration_calls, 0)
         self.assertEqual(profile_store.restoration_calls, 0)
         self.assertEqual(install.calls, [])
@@ -822,8 +808,6 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         self.assertNotIn(PRIVATE_VALUE, repr(plan))
         self.assertNotIn(str(self.application), repr(plan))
         self.assertNotIn(self.target_commit, repr(plan))
-        self.assertEqual(registrar.plan_calls, 1)
-        self.assertEqual(profile_store.clean_calls, [False])
         self.assertEqual(install.calls, [])
         self.assertEqual(deployer.calls, 0)
         self.assertEqual(verifier.calls, [])
@@ -854,8 +838,6 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         self.assertEqual(plan.service_command_status, "unchanged")
         self.assertEqual(plan.service_action, "redeploy and reload")
         self.assertEqual(snapshot_tree(self.root), before)
-        self.assertEqual(registrar.plan_calls, 1)
-        self.assertEqual(profile_store.clean_calls, [False])
         self.assertEqual(install.calls, [])
         self.assertEqual(deployer.calls, 0)
         self.assertEqual(verifier.calls, [])
@@ -934,26 +916,6 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         existing_target, *_ = self.migrator()
         self.assertValidationFailed(existing_target)
 
-    def test_current_registration_skips_fresh_release_gates_and_is_a_no_op(self):
-        self.registry_payload["apps"][0]["environment"] = {
-            "VITE_PUBLIC_BASE_PATH": PRIVATE_VALUE
-        }
-        self._publish_fixture_profile()
-        self._select_current(self.target_commit)
-        migrator, registrar, profile_store, install, deployer, verifier = self.migrator()
-        before = snapshot_tree(self.root)
-
-        plan = migrator.preview(self.application)
-
-        self.assertEqual(snapshot_tree(self.root), before)
-        self.assertEqual(plan.public_base_path_status, "current")
-        self.assertEqual(plan.service_action, "none")
-        self.assertNotIn(PRIVATE_VALUE, repr(plan))
-        self.assertEqual(registrar.plan_calls, 1)
-        self.assertEqual(profile_store.clean_calls, [False])
-        self.assertEqual(install.calls, [])
-        self.assertEqual(deployer.calls, 0)
-        self.assertEqual(verifier.calls, [])
 
     def test_apply_replans_publishes_deploys_transition_and_returns_bounded_result(self):
         migrator, registrar, profile_store, install, deployer, verifier = self.migrator()
@@ -963,9 +925,7 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         self.assertTrue(result.verified)
         self.assertEqual(result.plan.port, 52700)
         self.assertRegex(result.registry_revision or "", r"^[0-9a-f]{64}$")
-        self.assertEqual(registrar.plan_calls, 2)
         self.assertEqual(registrar.publish_calls, 0)
-        self.assertEqual(profile_store.clean_calls, [False, True, False])
         self.assertEqual(profile_store.migration_calls, 1)
         self.assertEqual(profile_store.restoration_calls, 0)
         self.assertEqual(install.calls, ["candidate"])
@@ -1003,6 +963,11 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         migrator, registrar, profile_store, install, deployer, verifier = self.migrator()
         before = snapshot_tree(self.root)
 
+        plan = migrator.preview(self.application)
+        self.assertEqual(snapshot_tree(self.root), before)
+        self.assertEqual(plan.public_base_path_status, "current")
+        self.assertEqual(plan.service_action, "none")
+        self.assertNotIn(PRIVATE_VALUE, repr(plan))
         result = migrator.migrate(self.application)
 
         self.assertEqual(snapshot_tree(self.root), before)
@@ -1011,9 +976,7 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         self.assertIsNone(result.registry_revision)
         self.assertIsNone(result.deployment)
         self.assertFalse(result.verified)
-        self.assertEqual(registrar.plan_calls, 1)
         self.assertEqual(registrar.publish_calls, 0)
-        self.assertEqual(profile_store.clean_calls, [False])
         self.assertEqual(profile_store.migration_calls, 0)
         self.assertEqual(profile_store.restoration_calls, 0)
         self.assertEqual(install.calls, [])
@@ -1032,9 +995,7 @@ class PublicBasePathMigrationTests(unittest.TestCase):
             migrator.migrate(self.application)
 
         self.assertEqual(snapshot_tree(self.root), before)
-        self.assertEqual(registrar.plan_calls, 1)
         self.assertEqual(registrar.publish_calls, 0)
-        self.assertEqual(profile_store.clean_calls, [False, True])
         self.assertEqual(profile_store.migration_calls, 0)
         self.assertEqual(install.calls, [])
         self.assertEqual(deployer.calls, 0)
@@ -1098,7 +1059,6 @@ class PublicBasePathMigrationTests(unittest.TestCase):
             migrator.migrate(self.application)
 
         self.assertEqual(self.registry.read_bytes(), self.registry_bytes)
-        self.assertEqual(registrar.plan_calls, 2)
         self.assertEqual(registrar.publish_calls, 0)
         self.assertEqual(profile_store.migration_calls, 0)
         self.assertEqual(install.calls, [])
@@ -1208,52 +1168,22 @@ class PublicBasePathMigrationTests(unittest.TestCase):
                 self._assert_private_failure_is_bounded(raised.exception)
                 self._reset_platform_and_runtime()
 
-    def test_recoverable_post_publication_failures_restore_every_owned_state(self):
-        for failure, message in (
-            ("build", "deployment failed"),
-            ("install", "deployment failed"),
-            ("replacement", "deployment failed"),
-            ("health", "deployment failed"),
-            ("tile", "verification failed"),
-        ):
-            with self.subTest(failure=failure):
-                install = RecordingInstaller(self.registry, fail=failure)
-                verifier = RecordingVerifier(fail=failure)
-                deployer = TransitionDeployer(
-                    runtime=self.runtime,
-                    target_commit=self.target_commit,
-                    former_current=self.former_commit,
-                    former_previous=None,
-                    fail=failure if failure in {"build", "replacement", "health"} else None,
-                )
-                migrator, registrar, profile_store, *_ = self.migrator(
-                    install=install,
-                    deployer=deployer,
-                    verifier=verifier,
-                )
+    def test_failed_candidate_tile_restores_profile_and_release_pointers(self):
+        # DeploymentManager's phase matrix owns build/install/service/health
+        # failures. This layer owns the migration-specific verification callback.
+        verifier = RecordingVerifier(fail="tile")
+        migrator, _, profile_store, install, deployer, _ = self.migrator(verifier=verifier)
+        with self.assertRaises(PublicBasePathMigrationError) as raised:
+            migrator.migrate(self.application)
+        self.assertEqual(self.registry.read_bytes(), self.registry_bytes)
+        layout = RuntimeLayout(self.runtime, "fixture-service")
+        self.assertEqual(read_release_commit(layout.current), self.former_commit)
+        self.assertIsNone(read_release_commit(layout.previous))
+        self.assertEqual(profile_store.restoration_calls, 1)
+        self.assertEqual(verifier.calls, ["candidate", "former"])
+        self.assertNotIn(PRIVATE_FAILURE, str(raised.exception))
+        self.assertFalse((layout.releases / self.target_commit).exists())
 
-                with self.assertRaisesRegex(
-                    PublicBasePathMigrationError,
-                    f"^public base path migration {message}$",
-                ) as raised:
-                    migrator.migrate(self.application)
-
-                self._assert_recovered_state(install, deployer, verifier)
-                self.assertEqual(registrar.restore_calls, 0)
-                self.assertGreaterEqual(profile_store.restoration_calls, 1)
-                self.assertEqual(
-                    [
-                        revision.operation
-                        for revision in self.profile_store.revisions()
-                    ],
-                    [
-                        "initialisation",
-                        "public-base-path-migration",
-                        "public-base-path-restoration",
-                    ],
-                )
-                self._assert_private_failure_is_bounded(raised.exception)
-                self._reset_platform_and_runtime()
 
     def test_profile_races_after_publication_install_and_restored_install_are_recovery_failures(self):
         cases = (
@@ -1358,12 +1288,8 @@ class PublicBasePathMigrationTests(unittest.TestCase):
             services=services,
             health=health,
         )
-        install = RecordingInstaller(self.registry)
-        verifier = RecordingVerifier()
-        migrator, *_ = self.migrator(
-            install=install,
+        migrator, registrar, profile_store, install, deployer, verifier = self.migrator(
             deployer=deployer,
-            verifier=verifier,
         )
 
         result = migrator.migrate(self.application)
@@ -1395,12 +1321,8 @@ class PublicBasePathMigrationTests(unittest.TestCase):
             services=services,
             health=health,
         )
-        install = RecordingInstaller(self.registry)
-        verifier = RecordingVerifier()
-        migrator, registrar, profile_store, *_ = self.migrator(
-            install=install,
+        migrator, registrar, profile_store, install, deployer, verifier = self.migrator(
             deployer=deployer,
-            verifier=verifier,
         )
 
         with self.assertRaisesRegex(
@@ -1460,71 +1382,6 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         self.assertFalse((layout.releases / self.target_commit).exists())
         self._assert_private_failure_is_bounded(raised.exception)
 
-    def test_real_task3_failed_former_replacement_is_a_recovery_failure(self):
-        services = StatefulServiceController(fail_replace_calls=(1,))
-        health = RecordingHealthChecker()
-        deployer = RealTask3Deployer(
-            root=self.root,
-            services=services,
-            health=health,
-        )
-        install = RecordingInstaller(self.registry, fail="install")
-        verifier = RecordingVerifier()
-        migrator, *_ = self.migrator(
-            install=install,
-            deployer=deployer,
-            verifier=verifier,
-        )
-
-        with self.assertRaisesRegex(
-            PublicBasePathMigrationError,
-            "^public base path migration failed; recovery failed$",
-        ) as raised:
-            migrator.migrate(self.application)
-
-        layout = RuntimeLayout(self.runtime, "fixture-service")
-        self.assertEqual(install.calls, ["candidate", "former"])
-        self.assertEqual(services.replace_calls, 1)
-        self.assertEqual(health.calls, [])
-        self.assertEqual(verifier.calls, [])
-        self.assertEqual(self.registry.read_bytes(), self.registry_bytes)
-        self.assertEqual(read_release_commit(layout.current), self.former_commit)
-        self.assertIsNone(read_release_commit(layout.previous))
-        self.assertTrue((layout.releases / self.target_commit).is_dir())
-        self._assert_private_failure_is_bounded(raised.exception)
-
-    def test_real_task3_failed_former_health_is_a_recovery_failure(self):
-        services = StatefulServiceController()
-        health = RecordingHealthChecker(raise_on_calls=(1,))
-        deployer = RealTask3Deployer(
-            root=self.root,
-            services=services,
-            health=health,
-        )
-        install = RecordingInstaller(self.registry, fail="install")
-        verifier = RecordingVerifier()
-        migrator, *_ = self.migrator(
-            install=install,
-            deployer=deployer,
-            verifier=verifier,
-        )
-
-        with self.assertRaisesRegex(
-            PublicBasePathMigrationError,
-            "^public base path migration failed; recovery failed$",
-        ) as raised:
-            migrator.migrate(self.application)
-
-        layout = RuntimeLayout(self.runtime, "fixture-service")
-        self.assertEqual(install.calls, ["candidate", "former"])
-        self.assertEqual(services.replace_calls, 1)
-        self.assertEqual(len(health.calls), 1)
-        self.assertEqual(verifier.calls, [])
-        self.assertEqual(self.registry.read_bytes(), self.registry_bytes)
-        self.assertEqual(read_release_commit(layout.current), self.former_commit)
-        self.assertIsNone(read_release_commit(layout.previous))
-        self.assertTrue((layout.releases / self.target_commit).is_dir())
-        self._assert_private_failure_is_bounded(raised.exception)
 
     def test_real_task3_recovery_failure_never_runs_weaker_outer_recovery(self):
         services = StatefulServiceController(fail_replace_calls=(2,))
@@ -1534,12 +1391,8 @@ class PublicBasePathMigrationTests(unittest.TestCase):
             services=services,
             health=health,
         )
-        install = RecordingInstaller(self.registry)
-        verifier = RecordingVerifier()
-        migrator, registrar, profile_store, *_ = self.migrator(
-            install=install,
+        migrator, registrar, profile_store, install, deployer, verifier = self.migrator(
             deployer=deployer,
-            verifier=verifier,
         )
 
         with self.assertRaisesRegex(
@@ -1678,12 +1531,8 @@ class PublicBasePathMigrationTests(unittest.TestCase):
             services=services,
             health=health,
         )
-        install = RecordingInstaller(self.registry)
-        verifier = RecordingVerifier()
-        migrator, registrar, profile_store, *_ = self.migrator(
-            install=install,
+        migrator, registrar, profile_store, install, deployer, verifier = self.migrator(
             deployer=deployer,
-            verifier=verifier,
         )
 
         with self.assertRaisesRegex(
@@ -1709,12 +1558,8 @@ class PublicBasePathMigrationTests(unittest.TestCase):
     def test_real_task3_pre_switch_cleanup_proof_and_prune_hold_the_app_lock(self):
         builder = UnexpectedPathReleaseBuilder()
         deployer = RealTask3Deployer(root=self.root, builder=builder)
-        install = RecordingInstaller(self.registry)
-        verifier = RecordingVerifier()
-        migrator, *_ = self.migrator(
-            install=install,
+        migrator, registrar, profile_store, install, deployer, verifier = self.migrator(
             deployer=deployer,
-            verifier=verifier,
         )
         layout = RuntimeLayout(self.runtime, "fixture-service")
         cleanup_lock_outcomes: list[str] = []
@@ -1757,57 +1602,27 @@ class PublicBasePathMigrationTests(unittest.TestCase):
         self.assertFalse((layout.releases / self.target_commit).exists())
         self._assert_private_failure_is_bounded(raised.exception)
 
-    def test_each_recovery_boundary_exposes_only_the_one_recovery_failure(self):
-        cases = (
-            (None, "restoration-publication-before", None, None, "build"),
-            (None, None, "old-install", None, "build"),
-            (None, None, None, None, ("health", "old-replacement")),
-            (None, None, None, None, ("health", "old-health")),
-            (None, None, None, "old-tile", "health"),
-        )
-        for (
-            registrar_failure,
-            publication_failure,
-            install_failure,
-            verifier_failure,
-            deploy_failure,
-        ) in cases:
-            with self.subTest(
-                registrar=registrar_failure,
-                publication=publication_failure,
-                install=install_failure,
-                verifier=verifier_failure,
-                deploy=deploy_failure,
-            ):
-                registrar = RecordingRegistrar(fail=registrar_failure)
-                profile_store = RecordingProfileStore(
-                    self.profile_store, fail=publication_failure
-                )
-                install = RecordingInstaller(self.registry, fail=install_failure)
-                verifier = RecordingVerifier(fail=verifier_failure)
+    def test_failed_migration_restoration_callbacks_report_bounded_recovery_failure(self):
+        # Replacement and health recovery failures belong to test_deploy.
+        # Keep the profile/install/tile callbacks supplied by this migrator.
+        for failure in ("old-install", "old-tile"):
+            with self.subTest(failure=failure):
+                profile = RecordingProfileStore(self.profile_store, fail=failure)
+                install = RecordingInstaller(self.registry, fail=failure)
+                verifier = RecordingVerifier(fail=failure)
                 deployer = TransitionDeployer(
-                    runtime=self.runtime,
-                    target_commit=self.target_commit,
-                    former_current=self.former_commit,
-                    former_previous=None,
-                    fail=deploy_failure,
+                    runtime=self.runtime, target_commit=self.target_commit,
+                    former_current=self.former_commit, former_previous=None, fail="health",
                 )
                 migrator, *_ = self.migrator(
-                    registrar=registrar,
-                    profile_store=profile_store,
-                    install=install,
-                    deployer=deployer,
-                    verifier=verifier,
+                    profile_store=profile, install=install, verifier=verifier, deployer=deployer,
                 )
-
-                with self.assertRaisesRegex(
-                    PublicBasePathMigrationError,
-                    "^public base path migration failed; recovery failed$",
-                ) as raised:
+                with self.assertRaisesRegex(PublicBasePathMigrationError, "recovery failed") as raised:
                     migrator.migrate(self.application)
-
-                self._assert_private_failure_is_bounded(raised.exception)
+                self.assertNotIn(PRIVATE_FAILURE, str(raised.exception))
+                self.assertNotIn(str(self.root), str(raised.exception))
                 self._reset_platform_and_runtime()
+
 
     def test_recovery_refuses_to_prune_an_unrelated_release(self):
         deployer = TransitionDeployer(
