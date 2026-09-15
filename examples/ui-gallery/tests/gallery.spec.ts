@@ -320,11 +320,14 @@ for (const viewport of [
   });
 }
 
+// Hosted and developer macOS Chromium builds have a small glyph-rasterisation
+// variance at desktop scale. Bound that variance by an absolute pixel count;
+// the smaller mobile baselines remain pixel-exact.
 for (const snapshot of [
-  { name: 'gallery-light-desktop.png', mode: 'light', viewport: { width: 1280, height: 1200 } },
-  { name: 'gallery-dark-desktop.png', mode: 'dark', viewport: { width: 1280, height: 1200 } },
-  { name: 'gallery-light-mobile.png', mode: 'light', viewport: { width: 390, height: 844 } },
-  { name: 'gallery-dark-mobile.png', mode: 'dark', viewport: { width: 390, height: 844 } },
+  { name: 'gallery-light-desktop.png', mode: 'light', viewport: { width: 1280, height: 1200 }, maxDiffPixels: 4_000 },
+  { name: 'gallery-dark-desktop.png', mode: 'dark', viewport: { width: 1280, height: 1200 }, maxDiffPixels: 4_000 },
+  { name: 'gallery-light-mobile.png', mode: 'light', viewport: { width: 390, height: 844 }, maxDiffPixels: 0 },
+  { name: 'gallery-dark-mobile.png', mode: 'dark', viewport: { width: 390, height: 844 }, maxDiffPixels: 0 },
 ] as const) {
   test(`matches ${snapshot.name}`, async ({ page }) => {
     await page.setViewportSize(snapshot.viewport);
@@ -335,7 +338,11 @@ for (const snapshot of [
       `${snapshot.mode === 'light' ? 'Light' : 'Dark'} colour mode`,
     ).click();
     await expectNoHorizontalOverflow(page);
-    await expect(page).toHaveScreenshot(snapshot.name, { animations: 'disabled', fullPage: true });
+    await expect(page).toHaveScreenshot(snapshot.name, {
+      animations: 'disabled',
+      fullPage: true,
+      maxDiffPixels: snapshot.maxDiffPixels,
+    });
     expect(messages).toEqual([]);
   });
 }
