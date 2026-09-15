@@ -5,17 +5,10 @@
 
 from __future__ import annotations
 
-import codecs
-import hashlib
 import io
 import json
 import os
 import plistlib
-import re
-import secrets
-import selectors
-import shutil
-import signal
 import socket
 import stat
 import subprocess
@@ -24,7 +17,6 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,18 +28,9 @@ sys.path.insert(0, str(PLATFORM_REPOSITORY))
 from local_web_server import cli
 import local_web_server.git_build as git_build_module
 from local_web_server.app_activation import AppActivator, verify_served_index_tile
-from local_web_server.app_foundation import render_generated_repository
-from local_web_server.app_provenance import (
-    CURRENT_TEMPLATE_VERSION,
-    AppProvenance,
-    UiArtifactReference,
-    render_provenance,
-)
 from local_web_server.app_registration import AppRegistrar
-from local_web_server.app_template import TemplateInputs
 from local_web_server.config import (
     ConfigError,
-    SUPPORTED_PLATFORM_CONTRACT,
     load_manifest,
     load_registry,
 )
@@ -68,13 +51,45 @@ from local_web_server.services import HttpHealthChecker, ServiceState
 from local_web_server.ui_package import build_ui_package
 from scripts.verify_new_app_workflow import (
     WorkflowCommand,
-    _process_group_exists,
-    _stop_process_group,
 )
 from scripts.disposable_workflow_support import (
     initialise_disposable_host_profile,
     sanitized_subprocess_environment,
 )
+
+
+from scripts.migration_fixture import (
+    generate_service_repository,
+    inherit_worker_session,
+    private_environment as _private_execution_environment,
+    process_exists as _process_exists,
+    run_bounded as _run_bounded_process,
+    stop_process as _stop_process,
+)
+
+
+def _owned_environment() -> dict[str, str]:
+    return sanitized_subprocess_environment()
+
+
+def _execute_workflow_command(command: WorkflowCommand) -> None:
+    result = _run_bounded_process(
+        command.argv, cwd=command.cwd, env=_owned_environment(), timeout=command.timeout
+    )
+    if result.returncode:
+        raise RuntimeError(f"disposable command failed: {command.label}")
+
+
+def _read_git(repository: Path, *arguments: str) -> str:
+    result = _run_bounded_process(
+        ("/usr/bin/git", "-C", str(repository), *arguments),
+        cwd=repository,
+        env=_owned_environment(),
+        timeout=30,
+    )
+    if result.returncode:
+        raise RuntimeError("disposable Git query failed")
+    return result.stdout.strip()
 
 
 CODING_ROOT = PLATFORM_REPOSITORY.parent
@@ -92,325 +107,19 @@ PHASES = (
 )
 
 
-SupervisedCommandFactory = Callable[[Path, Path, Path], tuple[str, ...]]
-Emitter = Callable[[str], None]
 _MAX_CLI_OUTPUT = 8192
 _MAX_HTTP_BODY = 8192
-_MAX_GIT_OUTPUT = 8192
 _MAX_CADDY_OUTPUT = 262144
 _CADDY_COMMAND_TIMEOUT = 10.0
 _MAX_BUILD_LOG = 8192
 _BUILD_COMMAND_TIMEOUT = 20.0
 _CADDY = Path("/opt/homebrew/bin/caddy")
-_SCENARIOS = {"normal", "corrupt-caddy-route", "noisy-build"}
 _HTTP_READY_TIMEOUT = 5.0
 _DATA_SENTINEL = b'{"state":"external-and-immutable"}\n'
 _APP_ID = "public-base-path-fixture"
 _ROUTE = "/fixture"
 _SERVICE_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-_ACTIVE_PROCESS_LEDGER: Path | None = None
-_ACTIVE_PROCESS_GROUPS: dict[int, str] = {}
-_PROCESS_OWNER_TOKEN: str | None = None
-_PRIVATE_EXECUTION_ENVIRONMENT: dict[str, str] | None = None
-_OWNER_ENVIRONMENT_NAME = "LOCAL_WEB_PUBLIC_BASE_PATH_MIGRATION_OWNER"
 _PARENT_SECRET_ENVIRONMENT_NAME = "LOCAL_WEB_PUBLIC_BASE_PATH_PARENT_SECRET"
-_OWNER_PATTERN = re.compile(
-    rb"(?:^| )LOCAL_WEB_PUBLIC_BASE_PATH_MIGRATION_OWNER=([0-9a-f]{64})(?: |$)"
-)
-_UNVERIFIABLE_IDENTITY = "<unverifiable>"
-_MAX_PROCESS_TABLE_OUTPUT = 8 * 1024 * 1024
-
-
-def _group_exists(process_group: int) -> bool:
-    try:
-        return _process_group_exists(process_group)
-    except PermissionError:
-        return True
-
-
-def _owned_environment() -> dict[str, str] | None:
-    if (
-        _PROCESS_OWNER_TOKEN is None
-        or _PRIVATE_EXECUTION_ENVIRONMENT is None
-        or re.fullmatch(r"[0-9a-f]{64}", _PROCESS_OWNER_TOKEN) is None
-    ):
-        return None
-    return {
-        **_PRIVATE_EXECUTION_ENVIRONMENT,
-        _OWNER_ENVIRONMENT_NAME: _PROCESS_OWNER_TOKEN,
-    }
-
-
-def _private_execution_environment(root: Path) -> dict[str, str]:
-    resolved_root = Path(root).resolve(strict=True)
-    environment_root = resolved_root / "process-environment"
-    paths = {
-        "TMPDIR": environment_root / "tmp",
-        "HOME": environment_root / "home",
-        "XDG_CONFIG_HOME": environment_root / "config",
-        "XDG_DATA_HOME": environment_root / "data",
-    }
-    for directory in paths.values():
-        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-        directory.chmod(0o700)
-    return {
-        "PATH": _SERVICE_PATH,
-        "LANG": "C",
-        "LC_ALL": "C",
-        **{name: str(path) for name, path in paths.items()},
-    }
-
-
-def _bounded_ps_output(arguments: tuple[str, ...], maximum: int) -> bytes | None:
-    environment = {
-        "PATH": _SERVICE_PATH,
-        "LANG": "C",
-        "LC_ALL": "C",
-    }
-    with tempfile.TemporaryFile() as output:
-        try:
-            process = subprocess.Popen(
-                arguments,
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=subprocess.DEVNULL,
-                env=sanitized_subprocess_environment(environment),
-                close_fds=True,
-                start_new_session=True,
-            )
-            try:
-                return_code = process.wait(timeout=1)
-            finally:
-                _stop_process_group(process)
-        except (OSError, subprocess.TimeoutExpired, RuntimeError):
-            return None
-        size = output.tell()
-        if return_code != 0 or size > maximum:
-            return None
-        output.seek(0)
-        return output.read()
-
-
-@dataclass(frozen=True)
-class _OwnedProcess:
-    process_id: int
-    started: str
-    owner: str
-
-
-def _parse_owned_process_line(line: bytes) -> _OwnedProcess | None:
-    fields = line.split(maxsplit=6)
-    if len(fields) != 7:
-        return None
-    match = _OWNER_PATTERN.search(fields[6])
-    if match is None:
-        return None
-    try:
-        process_id = int(fields[0])
-        owner = match.group(1).decode("ascii")
-        started = b" ".join(fields[1:6]).decode("ascii")
-    except (ValueError, UnicodeError):
-        return None
-    if process_id <= 0:
-        return None
-    return _OwnedProcess(process_id, started, owner)
-
-
-def _owned_process_identity(process_id: int) -> _OwnedProcess | None:
-    output = _bounded_ps_output(
-        (
-            "/bin/ps",
-            "eww",
-            "-p",
-            str(process_id),
-            "-o",
-            "pid=,lstart=,command=",
-        ),
-        65536,
-    )
-    if output is None:
-        return None
-    lines = output.splitlines()
-    return _parse_owned_process_line(lines[0]) if len(lines) == 1 else None
-
-
-def _discover_owned_processes(owner: str) -> tuple[_OwnedProcess, ...] | None:
-    if not re.fullmatch(r"[0-9a-f]{64}", owner):
-        return None
-    output = _bounded_ps_output(
-        ("/bin/ps", "eww", "-axo", "pid=,lstart=,command="),
-        _MAX_PROCESS_TABLE_OUTPUT,
-    )
-    if output is None:
-        return None
-    lines = output.splitlines()
-    if len(lines) > 16384:
-        return None
-    processes = []
-    for line in lines:
-        process = _parse_owned_process_line(line)
-        if (
-            process is not None
-            and process.owner == owner
-            and process.process_id != os.getpid()
-        ):
-            processes.append(process)
-    return tuple(processes)
-
-
-def _reap_owned_processes(owner: str, *, cleanup_timeout: float = 1.0) -> bool:
-    targeted: dict[int, _OwnedProcess] = {}
-    for action in (signal.SIGTERM, signal.SIGKILL):
-        deadline = time.monotonic() + cleanup_timeout
-        while True:
-            processes = _discover_owned_processes(owner)
-            if processes is None:
-                return False
-            if not processes:
-                break
-            for process in processes:
-                targeted[process.process_id] = process
-                if _owned_process_identity(process.process_id) != process:
-                    targeted.pop(process.process_id, None)
-                    continue
-                try:
-                    os.kill(process.process_id, action)
-                except ProcessLookupError:
-                    targeted.pop(process.process_id, None)
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.01)
-        if not processes:
-            break
-    if _discover_owned_processes(owner) not in ((),):
-        return False
-    deadline = time.monotonic() + cleanup_timeout
-    while targeted and time.monotonic() < deadline:
-        for process_id, expected in tuple(targeted.items()):
-            if _owned_process_identity(process_id) != expected:
-                targeted.pop(process_id, None)
-                continue
-            try:
-                os.kill(process_id, 0)
-            except ProcessLookupError:
-                targeted.pop(process_id, None)
-        if targeted:
-            time.sleep(0.01)
-    return not targeted
-
-
-def _pid_identity(process_id: int) -> str | None:
-    output = _bounded_ps_output(
-        ("/bin/ps", "eww", "-p", str(process_id), "-o", "command="),
-        65536,
-    )
-    if output is None:
-        return None
-    match = _OWNER_PATTERN.search(output)
-    return match.group(1).decode("ascii") if match is not None else None
-
-
-def _process_identity(process_group: int) -> str | None:
-    output = _bounded_ps_output(("/bin/ps", "-axo", "pid=,pgid="), 65536)
-    if output is None:
-        return _UNVERIFIABLE_IDENTITY if _group_exists(process_group) else None
-    members: list[int] = []
-    try:
-        for line in output.splitlines():
-            fields = line.split()
-            if len(fields) == 2 and int(fields[1]) == process_group:
-                members.append(int(fields[0]))
-    except ValueError:
-        return _UNVERIFIABLE_IDENTITY
-    if not members:
-        return None
-    if len(members) > 1024:
-        return _UNVERIFIABLE_IDENTITY
-    identities = [_pid_identity(member) for member in members]
-    if any(identity is None for identity in identities):
-        return _UNVERIFIABLE_IDENTITY
-    unique = set(identities)
-    return unique.pop() if len(unique) == 1 else _UNVERIFIABLE_IDENTITY
-
-
-def _publish_process_groups(ledger: Path, groups: dict[int, str]) -> None:
-    payload = json.dumps(
-        {
-            "groups": [
-                {"pgid": group, "identity": groups[group]}
-                for group in sorted(groups)
-            ],
-            "version": 1,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("ascii") + b"\n"
-    candidate = ledger.with_name(f".{ledger.name}.{os.getpid()}.tmp")
-    descriptor = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        try:
-            written = 0
-            while written < len(payload):
-                written += os.write(descriptor, payload[written:])
-            os.fsync(descriptor)
-        except BaseException:
-            candidate.unlink(missing_ok=True)
-            raise
-    finally:
-        os.close(descriptor)
-    os.replace(candidate, ledger)
-
-
-def _record_process_group(process: subprocess.Popen[bytes]) -> None:
-    if _ACTIVE_PROCESS_LEDGER is None:
-        return
-    process_group = process.pid
-    process.poll()
-    if not _group_exists(process_group):
-        return
-    if _PROCESS_OWNER_TOKEN is None:
-        raise RuntimeError("disposable process ownership was unavailable")
-    _ACTIVE_PROCESS_GROUPS[process_group] = _PROCESS_OWNER_TOKEN
-    _publish_process_groups(_ACTIVE_PROCESS_LEDGER, _ACTIVE_PROCESS_GROUPS)
-
-
-def _forget_process_group(process_group: int) -> None:
-    if _ACTIVE_PROCESS_LEDGER is None:
-        return
-    _ACTIVE_PROCESS_GROUPS.pop(process_group, None)
-    _publish_process_groups(_ACTIVE_PROCESS_LEDGER, _ACTIVE_PROCESS_GROUPS)
-
-
-def _execute_workflow_command(command: WorkflowCommand) -> None:
-    process = subprocess.Popen(
-        command.argv,
-        cwd=command.cwd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=sanitized_subprocess_environment(_owned_environment()),
-        close_fds=True,
-        start_new_session=True,
-    )
-    failure: BaseException | None = None
-    try:
-        try:
-            _record_process_group(process)
-            return_code = process.wait(timeout=command.timeout)
-        except BaseException as error:
-            failure = error
-            return_code = None
-    finally:
-        stopped = False
-        try:
-            _stop_process_group(process)
-            stopped = True
-        except BaseException as error:
-            failure = failure or error
-        if stopped:
-            _forget_process_group(process.pid)
-    if failure is not None or return_code != 0:
-        raise RuntimeError("disposable workflow command failed") from failure
 
 
 class _BoundedTextSink(io.StringIO):
@@ -482,48 +191,6 @@ def _run_git(repository: Path, *arguments: str) -> None:
     )
 
 
-def _read_git(repository: Path, *arguments: str) -> str:
-    with tempfile.TemporaryFile() as output:
-        process = subprocess.Popen(
-            ("/usr/bin/git", "-C", str(repository), *arguments),
-            cwd=repository,
-            stdin=subprocess.DEVNULL,
-            stdout=output,
-            stderr=subprocess.DEVNULL,
-            env=sanitized_subprocess_environment(_owned_environment()),
-            close_fds=True,
-            start_new_session=True,
-        )
-        failure: BaseException | None = None
-        return_code: int | None = None
-        try:
-            try:
-                _record_process_group(process)
-                return_code = process.wait(timeout=30)
-            except BaseException as error:
-                failure = error
-        finally:
-            stopped = False
-            try:
-                _stop_process_group(process)
-                stopped = True
-            except BaseException as cleanup_error:
-                if failure is None:
-                    failure = cleanup_error
-            if stopped:
-                _forget_process_group(process.pid)
-        if failure is not None or return_code != 0:
-            raise RuntimeError("disposable Git query failed") from failure
-        size = output.tell()
-        if size > _MAX_GIT_OUTPUT:
-            raise RuntimeError("disposable Git output exceeded its bound")
-        output.seek(0)
-        try:
-            return output.read().decode("utf-8").strip()
-        except UnicodeError as error:
-            raise RuntimeError("disposable Git output was invalid") from error
-
-
 def _create_disposable_guard_profile(root: Path) -> Path:
     platform = Path(root) / "host-profile-guard"
     platform.mkdir()
@@ -532,9 +199,7 @@ def _create_disposable_guard_profile(root: Path) -> Path:
     (platform / "local_web_server/source.py").write_text(
         "# disposable guard\n", encoding="utf-8"
     )
-    (platform / ".gitignore").write_text(
-        "config/local/\n", encoding="utf-8"
-    )
+    (platform / ".gitignore").write_text("config/local/\n", encoding="utf-8")
     _run_git(platform, "init", "-b", "main")
     _run_git(platform, "add", ".")
     _run_git(
@@ -667,8 +332,6 @@ class _DisposableServiceController:
             process.wait()
             self._capture_error(process)
         finally:
-            if not _group_exists(process.pid):
-                _forget_process_group(process.pid)
             self.process = None
 
     def _stop_process(self) -> None:
@@ -677,13 +340,11 @@ class _DisposableServiceController:
             return
         try:
             if process.poll() is None:
-                _stop_process_group(process)
+                _stop_process(process)
             else:
                 process.wait()
             self._capture_error(process)
         finally:
-            if not _group_exists(process.pid):
-                _forget_process_group(process.pid)
             self.process = None
 
     def _load_launch_spec(self, label: str, plist_path: Path) -> _LaunchSpec:
@@ -695,9 +356,15 @@ class _DisposableServiceController:
             raise RuntimeError("disposable service plist was unavailable") from error
         layout = RuntimeLayout(self.runtime_root, self.host.id)
         expected_directory = layout.current
-        arguments = payload.get("ProgramArguments") if isinstance(payload, dict) else None
-        working_directory = payload.get("WorkingDirectory") if isinstance(payload, dict) else None
-        environment = payload.get("EnvironmentVariables") if isinstance(payload, dict) else None
+        arguments = (
+            payload.get("ProgramArguments") if isinstance(payload, dict) else None
+        )
+        working_directory = (
+            payload.get("WorkingDirectory") if isinstance(payload, dict) else None
+        )
+        environment = (
+            payload.get("EnvironmentVariables") if isinstance(payload, dict) else None
+        )
         if (
             not isinstance(payload, dict)
             or payload.get("Label") != label
@@ -758,10 +425,10 @@ class _DisposableServiceController:
             stderr=subprocess.PIPE,
             env=environment,
             close_fds=True,
-            start_new_session=True,
+            start_new_session=False,
         )
         self.process = process
-        _record_process_group(process)
+
         self.process_groups.append(process.pid)
         self.records.append(
             _LaunchRecord(
@@ -863,8 +530,7 @@ class _DisposableInstaller:
         self.results.append(result)
         self.services.configure(registry)
         self.caddy.replace(
-            self.home
-            / "Library/LaunchAgents/com.sean.local-web.caddy.plist"
+            self.home / "Library/LaunchAgents/com.sean.local-web.caddy.plist"
         )
         return result
 
@@ -897,7 +563,9 @@ class _DisposableInstallRunner:
                 tuple(command),
                 cwd=self.repository,
                 env=environment,
-                timeout=min(float(timeout or _CADDY_COMMAND_TIMEOUT), _CADDY_COMMAND_TIMEOUT),
+                timeout=min(
+                    float(timeout or _CADDY_COMMAND_TIMEOUT), _CADDY_COMMAND_TIMEOUT
+                ),
                 maximum=_MAX_CADDY_OUTPUT,
                 merge_stderr=True,
             )
@@ -910,128 +578,27 @@ class _DisposableThemeGate:
             raise RuntimeError("disposable theme candidate was unavailable")
 
 
-class _BoundedBuildLog:
-    def __init__(self, destination, maximum: int) -> None:
-        self.destination = destination
-        self.maximum = maximum
-        self.written = 0
-        self.decoder = codecs.getincrementaldecoder("utf-8")("strict")
-
-    def write(self, content: bytes) -> bool:
-        remaining = self.maximum - self.written
-        accepted = content[:remaining]
-        if accepted:
-            try:
-                text = self.decoder.decode(accepted, final=False)
-            except UnicodeError as error:
-                raise RuntimeError("disposable build output was invalid") from error
-            self.destination.write(text)
-            self.destination.flush()
-            self.written += len(accepted)
-        return len(content) <= remaining
-
-    def finish(self) -> None:
-        try:
-            text = self.decoder.decode(b"", final=True)
-        except UnicodeError as error:
-            raise RuntimeError("disposable build output was invalid") from error
-        if text:
-            self.destination.write(text)
-            self.destination.flush()
-        self.decoder = codecs.getincrementaldecoder("utf-8")("strict")
-
-
-def _run_bounded_build_command(
-    arguments,
-    *,
-    cwd: Path,
-    environment: dict[str, str],
-    log: _BoundedBuildLog,
-) -> subprocess.CompletedProcess[str]:
-    owned_environment = sanitized_subprocess_environment(environment)
-    if _PROCESS_OWNER_TOKEN is not None:
-        owned_environment[_OWNER_ENVIRONMENT_NAME] = _PROCESS_OWNER_TOKEN
-    process = subprocess.Popen(
-        arguments,
-        cwd=cwd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env=owned_environment,
-        close_fds=True,
-        start_new_session=True,
-    )
-    if process.stdout is None:
-        raise RuntimeError("disposable build output was unavailable")
-    _record_process_group(process)
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout.fileno(), selectors.EVENT_READ)
-    deadline = time.monotonic() + _BUILD_COMMAND_TIMEOUT
-    failure: BaseException | None = None
-    try:
-        reached_eof = False
-        while not reached_eof:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise RuntimeError("disposable build exceeded its time bound")
-            events = selector.select(min(remaining, 0.1))
-            if not events:
-                continue
-            chunk = os.read(process.stdout.fileno(), 4096)
-            if not chunk:
-                reached_eof = True
-                continue
-            if not log.write(chunk):
-                raise RuntimeError("disposable build exceeded its output bound")
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise RuntimeError("disposable build exceeded its time bound")
-        process.wait(timeout=remaining)
-        log.finish()
-    except BaseException as error:
-        failure = error
-    finally:
-        selector.close()
-        process.stdout.close()
-        try:
-            _stop_process_group(process)
-        except BaseException as cleanup_error:
-            if failure is None:
-                failure = cleanup_error
-        if not _group_exists(process.pid):
-            _forget_process_group(process.pid)
-    if failure is not None:
-        raise RuntimeError("disposable production build was bounded") from failure
-    return subprocess.CompletedProcess(arguments, process.returncode)
-
-
 class _BuildSubprocessProxy:
-    def __init__(self, original, destination) -> None:
-        self.original = original
-        self.destination = destination
-        self.log = _BoundedBuildLog(destination, _MAX_BUILD_LOG)
+    """Bound actual production build commands using the common fixture runner."""
 
-    def __getattr__(self, name: str):
+    def __init__(self, original, destination):
+        self.original, self.destination = original, destination
+
+    def __getattr__(self, name):
         return getattr(self.original, name)
 
     def run(self, *args, **kwargs):
         if kwargs.get("stdout") is not self.destination:
             return self.original.run(*args, **kwargs)
-        if (
-            len(args) != 1
-            or kwargs.get("stderr") is not self.original.STDOUT
-            or kwargs.get("text") is not True
-            or kwargs.get("check") is not False
-            or not isinstance(kwargs.get("env"), dict)
-            or kwargs.get("cwd") is None
-        ):
-            raise RuntimeError("production builder subprocess contract changed")
-        return _run_bounded_build_command(
+        result = _run_bounded_process(
             args[0],
             cwd=Path(kwargs["cwd"]),
-            environment=kwargs["env"],
-            log=self.log,
+            env=kwargs["env"],
+            timeout=_BUILD_COMMAND_TIMEOUT,
+            maximum=_MAX_BUILD_LOG,
         )
+        self.destination.write(result.stdout)
+        return result
 
 
 class _BoundedProductionBuilder:
@@ -1097,7 +664,11 @@ class _DisposableCaddyController:
             "--config",
             str(self.runtime_root / "Caddyfile"),
         ]
-        environment = payload.get("EnvironmentVariables", {}) if isinstance(payload, dict) else None
+        environment = (
+            payload.get("EnvironmentVariables", {})
+            if isinstance(payload, dict)
+            else None
+        )
         if (
             not isinstance(payload, dict)
             or payload.get("Label") != "com.sean.local-web.caddy"
@@ -1115,9 +686,7 @@ class _DisposableCaddyController:
             tuple(sorted(environment.items())),
         )
 
-    def _execution_environment(
-        self, spec: _CaddyLaunchSpec
-    ) -> dict[str, str]:
+    def _execution_environment(self, spec: _CaddyLaunchSpec) -> dict[str, str]:
         environment = _owned_environment()
         if environment is None:
             raise RuntimeError("disposable process ownership was unavailable")
@@ -1126,7 +695,6 @@ class _DisposableCaddyController:
             "TMPDIR",
             "XDG_CONFIG_HOME",
             "XDG_DATA_HOME",
-            _OWNER_ENVIRONMENT_NAME,
         }
         if any(name in protected for name, _value in spec.environment):
             raise RuntimeError("disposable Caddy plist environment was invalid")
@@ -1176,10 +744,13 @@ class _DisposableCaddyController:
             server["listen"] = [f"127.0.0.1:{self.port}"]
             payload["admin"] = {"disabled": True}
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            raise RuntimeError("generated disposable Caddy routing was invalid") from error
-        content = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
-            "utf-8"
-        ) + b"\n"
+            raise RuntimeError(
+                "generated disposable Caddy routing was invalid"
+            ) from error
+        content = (
+            json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            + b"\n"
+        )
         if len(content) > _MAX_CADDY_OUTPUT:
             raise RuntimeError("generated disposable Caddy routing exceeded its bound")
         self.execution_config.write_bytes(content)
@@ -1223,10 +794,8 @@ class _DisposableCaddyController:
         if process is None:
             return
         try:
-            _stop_process_group(process)
+            _stop_process(process)
         finally:
-            if not _group_exists(process.pid):
-                _forget_process_group(process.pid)
             self.process = None
 
     def replace(self, plist_path: Path) -> None:
@@ -1248,10 +817,10 @@ class _DisposableCaddyController:
             stderr=subprocess.DEVNULL,
             env=environment,
             close_fds=True,
-            start_new_session=True,
+            start_new_session=False,
         )
         self.process = process
-        _record_process_group(process)
+
         self.process_groups.append(process.pid)
         try:
             process.wait(timeout=0.25)
@@ -1264,419 +833,6 @@ class _DisposableCaddyController:
 
     def close(self) -> None:
         self._stop()
-
-
-def _registry_unchanged(path: Path, content: bytes, mode: int) -> bool:
-    try:
-        return (
-            path.read_bytes() == content and stat.S_IMODE(path.stat().st_mode) == mode
-        )
-    except Exception:
-        return False
-
-
-def _reap_recorded_process_groups(
-    ledger: Path, *, cleanup_timeout: float = 1.0
-) -> bool:
-    try:
-        content = ledger.read_bytes() if ledger.exists() else b'{"groups":[],"version":1}'
-        if len(content) > 8192:
-            return False
-        payload = json.loads(content)
-        if not isinstance(payload, dict):
-            return False
-        entries = payload.get("groups")
-        if payload.get("version") != 1 or not isinstance(entries, list):
-            return False
-        groups: dict[int, str] = {}
-        for entry in entries:
-            if (
-                not isinstance(entry, dict)
-                or not isinstance(entry.get("pgid"), int)
-                or entry["pgid"] <= 0
-                or not isinstance(entry.get("identity"), str)
-                or not entry["identity"]
-            ):
-                return False
-            groups[entry["pgid"]] = entry["identity"]
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return False
-    cleanup_ok = True
-    for group, identity in tuple(groups.items()):
-        observed = _process_identity(group)
-        if observed is None:
-            groups.pop(group)
-            continue
-        if observed == _UNVERIFIABLE_IDENTITY:
-            cleanup_ok = False
-            continue
-        if observed != identity:
-            groups.pop(group)
-            continue
-        try:
-            os.killpg(group, signal.SIGTERM)
-        except ProcessLookupError:
-            groups.pop(group)
-            continue
-        deadline = time.monotonic() + cleanup_timeout
-        while _group_exists(group) and time.monotonic() < deadline:
-            time.sleep(0.01)
-        if _group_exists(group):
-            observed = _process_identity(group)
-            if observed is None:
-                groups.pop(group)
-                continue
-            if observed == _UNVERIFIABLE_IDENTITY:
-                cleanup_ok = False
-                continue
-            if observed != identity:
-                groups.pop(group)
-                continue
-            try:
-                os.killpg(group, signal.SIGKILL)
-            except ProcessLookupError:
-                groups.pop(group)
-                continue
-            deadline = time.monotonic() + cleanup_timeout
-            while _group_exists(group) and time.monotonic() < deadline:
-                time.sleep(0.01)
-        if _group_exists(group):
-            cleanup_ok = False
-        else:
-            groups.pop(group)
-    try:
-        _publish_process_groups(ledger, groups)
-    except OSError:
-        return False
-    return cleanup_ok
-
-
-def _terminate_supervised_process(process: subprocess.Popen[bytes]) -> None:
-    process_group = process.pid
-
-    def wait_for_group(timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while _group_exists(process_group) and time.monotonic() < deadline:
-            process.poll()
-            time.sleep(0.01)
-        return not _group_exists(process_group)
-
-    if _group_exists(process_group):
-        try:
-            os.killpg(process_group, signal.SIGTERM)
-        except (PermissionError, ProcessLookupError):
-            pass
-        if not wait_for_group(1):
-            try:
-                os.killpg(process_group, signal.SIGKILL)
-            except (PermissionError, ProcessLookupError):
-                pass
-            if not wait_for_group(1):
-                raise RuntimeError("disposable supervisor process cleanup failed")
-    try:
-        process.wait(timeout=1)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError("disposable supervisor process cleanup failed") from error
-
-
-def _read_pipe(descriptor: int, maximum: int) -> bytes:
-    return os.read(descriptor, maximum)
-
-
-def _read_supervised_output(
-    process: subprocess.Popen[bytes], *, timeout: float, maximum: int
-) -> tuple[bytes, bool, bool]:
-    if process.stdout is None:
-        raise RuntimeError("disposable supervisor output was unavailable")
-    descriptor = process.stdout.fileno()
-    selector = selectors.DefaultSelector()
-    selector.register(descriptor, selectors.EVENT_READ)
-    deadline = time.monotonic() + timeout
-    output = bytearray()
-    timed_out = False
-    overflow = False
-    reached_eof = False
-    try:
-        while not reached_eof:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                _terminate_supervised_process(process)
-                break
-            events = selector.select(min(remaining, 0.1))
-            if not events:
-                continue
-            chunk = _read_pipe(
-                descriptor, min(4096, maximum + 1 - len(output))
-            )
-            if not chunk:
-                reached_eof = True
-                break
-            output.extend(chunk)
-            if len(output) > maximum:
-                overflow = True
-                _terminate_supervised_process(process)
-                break
-        if not timed_out and not overflow:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                _terminate_supervised_process(process)
-            else:
-                try:
-                    process.wait(timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    timed_out = True
-                    _terminate_supervised_process(process)
-    finally:
-        selector.close()
-        try:
-            _terminate_supervised_process(process)
-        finally:
-            process.stdout.close()
-    return bytes(output), timed_out, overflow
-
-
-def _run_bounded_process(
-    arguments: tuple[str, ...],
-    *,
-    cwd: Path,
-    env: dict[str, str] | None,
-    timeout: float,
-    maximum: int,
-    merge_stderr: bool,
-) -> subprocess.CompletedProcess[str]:
-    process = subprocess.Popen(
-        arguments,
-        cwd=cwd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT if merge_stderr else subprocess.DEVNULL,
-        env=sanitized_subprocess_environment(env),
-        close_fds=True,
-        start_new_session=True,
-    )
-    _record_process_group(process)
-    try:
-        output, timed_out, overflow = _read_supervised_output(
-            process,
-            timeout=timeout,
-            maximum=maximum,
-        )
-    finally:
-        if not _group_exists(process.pid):
-            _forget_process_group(process.pid)
-    if timed_out:
-        raise RuntimeError("disposable subprocess exceeded its time bound")
-    if overflow:
-        raise RuntimeError("disposable subprocess exceeded its output bound")
-    try:
-        text = output.decode("utf-8")
-    except UnicodeError as error:
-        raise RuntimeError("disposable subprocess output was invalid") from error
-    return subprocess.CompletedProcess(arguments, process.returncode, text, "")
-
-
-class PublicBasePathMigrationWorkflowVerifier:
-    """Own one private workflow root and expose only bounded phase results."""
-
-    def __init__(
-        self,
-        *,
-        platform_repository: Path = PLATFORM_REPOSITORY,
-        coding_root: Path = CODING_ROOT,
-        live_registry: Path | None = None,
-        supervised_command_factory: SupervisedCommandFactory | None = None,
-        external_data: Path | None = None,
-        failure_phase: str | None = None,
-        scenario: str = "normal",
-        supervision_timeout: float = 900.0,
-        emit: Emitter = print,
-    ) -> None:
-        self._platform_repository = Path(platform_repository).resolve()
-        self._coding_root = Path(coding_root).resolve()
-        self._live_registry = None if live_registry is None else Path(live_registry)
-        self._supervised_command_factory = supervised_command_factory
-        self._external_data = (
-            Path(external_data).resolve(strict=True)
-            if external_data is not None
-            else None
-        )
-        if failure_phase is not None and failure_phase not in PHASES:
-            raise ValueError("disposable failure phase was invalid")
-        self._failure_phase = failure_phase
-        if scenario not in _SCENARIOS:
-            raise ValueError("disposable scenario was invalid")
-        self._scenario = scenario
-        self._supervision_timeout = supervision_timeout
-        self._emit = emit
-
-    def run(self) -> int:
-        temporary: tempfile.TemporaryDirectory[str] | None = None
-        external_temporary: tempfile.TemporaryDirectory[str] | None = None
-        live_state: tuple[object, ...] | None = None
-        external_state: tuple[object, ...] | None = None
-        external_data = self._external_data
-        result = 0
-        process_ledger: Path | None = None
-        worker_cleanup_ok: bool | None = None
-        supervisor_needs_reap = False
-        owner_token: str | None = None
-        live_registry = self._live_registry
-        owns_registry = live_registry is None
-        try:
-            temporary = tempfile.TemporaryDirectory(
-                prefix=".local-web-public-base-path-migration-",
-                dir=self._coding_root,
-            )
-            root = Path(temporary.name).resolve(strict=True)
-            if live_registry is None:
-                live_registry = _create_disposable_guard_profile(root)
-            live_state = _file_state(live_registry)
-            if external_data is None:
-                external_temporary = tempfile.TemporaryDirectory(
-                    prefix=".local-web-public-base-path-external-",
-                    dir=self._coding_root,
-                )
-                external_data = Path(external_temporary.name) / "state.json"
-                external_data.write_bytes(_DATA_SENTINEL)
-                external_data.chmod(0o640)
-            external_state = _file_state(external_data)
-            process_ledger = root / "process-groups"
-            supervisor_needs_reap = True
-            if self._supervised_command_factory is None:
-                artifact_path = root / "local-web-ui.tgz"
-                artifact = build_ui_package(
-                    self._platform_repository, artifact_path
-                )
-                if artifact.path != artifact_path:
-                    raise RuntimeError(
-                        "disposable UI fixture artifact was invalid"
-                    )
-                command = (
-                    sys.executable,
-                    str(Path(__file__).resolve()),
-                    "--worker",
-                    str(root),
-                    str(self._platform_repository),
-                    str(live_registry),
-                    str(external_data),
-                    self._failure_phase or "-",
-                    self._scenario,
-                )
-            else:
-                command = self._supervised_command_factory(
-                    root, self._platform_repository, live_registry
-                )
-            owner_token = secrets.token_hex(32)
-            worker_environment = {
-                **_private_execution_environment(root),
-                _OWNER_ENVIRONMENT_NAME: owner_token,
-            }
-            process = subprocess.Popen(
-                command,
-                cwd=self._platform_repository,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                env=sanitized_subprocess_environment(worker_environment),
-                close_fds=True,
-                start_new_session=True,
-            )
-            output, timed_out, output_overflow = _read_supervised_output(
-                process,
-                timeout=self._supervision_timeout,
-                maximum=_MAX_CLI_OUTPUT,
-            )
-            protocol = (
-                [] if output_overflow else output.decode("ascii").splitlines()
-            )
-            completed = 0
-            protocol_valid = not output_overflow
-            for line in protocol:
-                if (
-                    worker_cleanup_ok is None
-                    and line == f"PASS {completed}"
-                    and completed < len(PHASES) - 1
-                ):
-                    if not _immutable_unchanged(
-                        live_registry, live_state
-                    ) or not _immutable_unchanged(external_data, external_state):
-                        protocol_valid = False
-                        break
-                    self._emit(f"{PHASES[completed]} PASS")
-                    completed += 1
-                elif worker_cleanup_ok is None and line in {
-                    "CLEAN PASS",
-                    "CLEAN FAIL",
-                }:
-                    worker_cleanup_ok = line == "CLEAN PASS"
-                else:
-                    protocol_valid = False
-                    break
-            operational_failed = (
-                timed_out
-                or not protocol_valid
-                or completed != len(PHASES) - 1
-            )
-            if operational_failed:
-                self._emit(f"{PHASES[completed]} FAIL")
-                result = 1
-            elif process.returncode != 0 and worker_cleanup_ok is not False:
-                worker_cleanup_ok = False
-            if worker_cleanup_ok is False:
-                result = 1
-            supervisor_needs_reap = not (
-                worker_cleanup_ok is True
-                and protocol_valid
-                and not timed_out
-            )
-        except BaseException:
-            self._emit(f"{PHASES[0]} FAIL")
-            result = 1
-        finally:
-            cleanup_ok = True
-            registry_ok = False
-            if owns_registry and live_state is not None:
-                registry_ok = _immutable_unchanged(live_registry, live_state)
-            if worker_cleanup_ok is False:
-                cleanup_ok = False
-            if temporary is not None:
-                if process_ledger is not None and supervisor_needs_reap:
-                    cleanup_ok = (
-                        _reap_recorded_process_groups(process_ledger) and cleanup_ok
-                    )
-                if owner_token is not None:
-                    cleanup_ok = _reap_owned_processes(owner_token) and cleanup_ok
-                try:
-                    temporary.cleanup()
-                    cleanup_ok = cleanup_ok and not Path(temporary.name).exists()
-                except BaseException:
-                    cleanup_ok = False
-            if live_state is None or external_state is None or external_data is None:
-                cleanup_ok = False
-            else:
-                if not owns_registry:
-                    registry_ok = _immutable_unchanged(
-                        live_registry, live_state
-                    )
-                cleanup_ok = (
-                    cleanup_ok
-                    and registry_ok
-                    and _immutable_unchanged(external_data, external_state)
-                )
-            if external_temporary is not None:
-                try:
-                    external_temporary.cleanup()
-                    cleanup_ok = cleanup_ok and not Path(
-                        external_temporary.name
-                    ).exists()
-                except BaseException:
-                    cleanup_ok = False
-            self._emit(f"{PHASES[-1]} {'PASS' if cleanup_ok else 'FAIL'}")
-            if not cleanup_ok:
-                result = 1
-        return result
 
 
 def _bounded_file_bytes(path: Path) -> bytes:
@@ -1934,49 +1090,12 @@ class DisposablePublicBasePathMigrationWorkflow:
             "user.email",
             "public-base-path-migration@localhost",
         )
-        ui_metadata = json.loads(
-            (self.platform / "packages/ui/package.json").read_text(encoding="utf-8")
-        )
-        ui_version = ui_metadata.get("version")
-        if not isinstance(ui_version, str):
-            raise RuntimeError("disposable UI fixture version was unavailable")
-        artifact = self.root / "local-web-ui.tgz"
-        artifact_content = artifact.read_bytes()
-        artifact_digest = hashlib.sha256(artifact_content).hexdigest()
-        inputs = TemplateInputs(
+        generate_service_repository(
+            self.repository,
+            self.platform,
+            self.root / "local-web-ui.tgz",
             app_id=_APP_ID,
-            title="Public Base Path Fixture",
             route=_ROUTE,
-            icon="database",
-            accent="#76D39B",
-            ui_version=ui_version,
-            ui_sha256=artifact_digest,
-            capabilities=(),
-            kind="service",
-        )
-        for rendered in render_generated_repository(inputs):
-            destination = self.repository / rendered.path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(rendered.content, encoding="utf-8")
-        vendor = self.repository / "vendor/local-web-ui.tgz"
-        vendor.parent.mkdir(exist_ok=True)
-        shutil.copyfile(artifact, vendor)
-        (self.repository / ".local-web-platform.json").write_bytes(
-            render_provenance(
-                AppProvenance(
-                    schema_version=1,
-                    template_version=CURRENT_TEMPLATE_VERSION,
-                    platform_contract_version=SUPPORTED_PLATFORM_CONTRACT,
-                    ui=UiArtifactReference(ui_version, artifact_digest),
-                    capabilities=(),
-                    domain_palette_tokens=(),
-                    managed_files=(
-                        Path("AGENTS.md"),
-                        Path("local-web.json"),
-                        Path("vendor/local-web-ui.tgz"),
-                    ),
-                )
-            )
         )
 
     def _prepare_old_service_commit(self) -> None:
@@ -1985,9 +1104,7 @@ class DisposablePublicBasePathMigrationWorkflow:
         manifest["route"] = _ROUTE
         manifest["healthPath"] = f"{_ROUTE}/healthz"
         manifest["build"] = {
-            "commands": [
-                ["/usr/bin/env", "python3", "scripts/build_fixture.py"]
-            ],
+            "commands": [["/usr/bin/env", "python3", "scripts/build_fixture.py"]],
             "output": "fixture-release",
             "environment": [
                 "FIXTURE_ENVIRONMENT_FILE_ONLY",
@@ -2022,9 +1139,7 @@ class DisposablePublicBasePathMigrationWorkflow:
         (self.repository / "server/service.mjs").write_text(
             _fixture_service_source(), encoding="utf-8"
         )
-        (self.repository / "build-version.txt").write_text(
-            "old\n", encoding="utf-8"
-        )
+        (self.repository / "build-version.txt").write_text("old\n", encoding="utf-8")
         gitignore = self.repository / ".gitignore"
         ignored = gitignore.read_text(encoding="utf-8")
         if not ignored.endswith("\n"):
@@ -2178,9 +1293,7 @@ class DisposablePublicBasePathMigrationWorkflow:
         content = (json.dumps(payload, indent=2) + "\n").encode("utf-8")
         HostProfileStore(
             HostProfilePaths.for_repository(self.platform)
-        ).publish_public_base_path_restoration(
-            _APP_ID, before, content
-        )
+        ).publish_public_base_path_restoration(_APP_ID, before, content)
         self.installer(self.platform, dry_run=False)
         self.services.configure(load_registry(self.registry_path))
         if _read_git(self.platform, "status", "--short"):
@@ -2206,8 +1319,7 @@ class DisposablePublicBasePathMigrationWorkflow:
             or registered.port != self.port
             or registered.start_command is None
             or registered.start_command.argv != self.old_command
-            or dict(registered.environment)
-            != {"VITE_PUBLIC_BASE_PATH": f"{_ROUTE}/"}
+            or dict(registered.environment) != {"VITE_PUBLIC_BASE_PATH": f"{_ROUTE}/"}
         ):
             raise RuntimeError("disposable activation fixture was invalid")
         self.legacy_registry = self._publish_legacy_registration()
@@ -2370,8 +1482,7 @@ class DisposablePublicBasePathMigrationWorkflow:
             or host.port != self.port
             or host.start_command is None
             or host.start_command.argv != self.old_command
-            or dict(host.environment)
-            != {"VITE_PUBLIC_BASE_PATH": f"{_ROUTE}/"}
+            or dict(host.environment) != {"VITE_PUBLIC_BASE_PATH": f"{_ROUTE}/"}
             or host.environment_file != self.environment_file.resolve(strict=True)
             or read_release_commit(self.layout.current) != self.candidate_commit
             or read_release_commit(self.layout.previous) != self.old_commit
@@ -2412,14 +1523,10 @@ class DisposablePublicBasePathMigrationWorkflow:
             or f'window.__fixturePublicBasePath = "{_ROUTE}/";' not in asset
             or f'window.__fixtureBuildVersion = "{version}";' not in asset
         ):
-            raise RuntimeError(
-                "disposable hosted build did not receive its base path"
-            )
+            raise RuntimeError("disposable hosted build did not receive its base path")
 
     def _verify_served_assets(self, version: str) -> None:
-        index = _read_http_bytes(f"http://{self.caddy.host}{_ROUTE}/").decode(
-            "utf-8"
-        )
+        index = _read_http_bytes(f"http://{self.caddy.host}{_ROUTE}/").decode("utf-8")
         asset = _read_http_bytes(
             f"http://{self.caddy.host}{_ROUTE}/assets/app.js"
         ).decode("utf-8")
@@ -2591,18 +1698,16 @@ class DisposablePublicBasePathMigrationWorkflow:
         ).revisions()
         if (
             not failed
-            or [record.version for record in new_records]
-            != ["retry", "candidate"]
+            or [record.version for record in new_records] != ["retry", "candidate"]
             or not new_records[0].release_ready
             or new_records[0].public_base_path != f"{_ROUTE}/"
         ):
             raise RuntimeError("disposable post-build failure was not exercised")
-        if _group_exists(new_records[0].process_group):
+        if _process_exists(new_records[0].process_group):
             raise RuntimeError("failed disposable process group remained alive")
         if (
             self.registry_path.read_bytes() != former_registry
-            or stat.S_IMODE(self.registry_path.stat().st_mode)
-            != former_registry_mode
+            or stat.S_IMODE(self.registry_path.stat().st_mode) != former_registry_mode
             or self._pointer_pair() != former_pointers
             or _managed_file_state(self.plist) != former_plist
             or _managed_file_state(self.runtime / "Caddyfile") != former_caddy
@@ -2622,8 +1727,7 @@ class DisposablePublicBasePathMigrationWorkflow:
             or self.caddy.process.poll() is not None
             or _read_git(self.platform, "status", "--short")
             or not profile_revisions
-            or profile_revisions[-1].operation
-            != PUBLIC_BASE_PATH_RESTORATION
+            or profile_revisions[-1].operation != PUBLIC_BASE_PATH_RESTORATION
             or profile_revisions[-1].app_id != _APP_ID
             or profile_revisions[-1].registry_bytes != former_registry
         ):
@@ -2648,8 +1752,7 @@ class DisposablePublicBasePathMigrationWorkflow:
             or host.port != self.port
             or host.start_command is None
             or host.start_command.argv != self.old_command
-            or dict(host.environment)
-            != {"VITE_PUBLIC_BASE_PATH": f"{_ROUTE}/"}
+            or dict(host.environment) != {"VITE_PUBLIC_BASE_PATH": f"{_ROUTE}/"}
             or host.environment_file != self.environment_file.resolve(strict=True)
             or self._pointer_pair() != (self.retry_commit, self.candidate_commit)
             or record.command != self.old_command
@@ -2680,7 +1783,7 @@ class DisposablePublicBasePathMigrationWorkflow:
         except BaseException as error:
             failures.append(error)
         if any(
-            _group_exists(group)
+            _process_exists(group)
             for group in (*self.services.process_groups, *self.caddy.process_groups)
         ):
             failures.append(RuntimeError("disposable process cleanup was incomplete"))
@@ -2688,88 +1791,98 @@ class DisposablePublicBasePathMigrationWorkflow:
             raise RuntimeError("disposable workflow cleanup failed") from failures[0]
 
 
-def _worker_main(
-    root: Path,
-    platform: Path,
-    live_registry: Path,
-    external_data: Path,
-    failure_phase: str | None,
-    scenario: str,
-) -> int:
-    global _ACTIVE_PROCESS_LEDGER, _ACTIVE_PROCESS_GROUPS
-    global _PRIVATE_EXECUTION_ENVIRONMENT, _PROCESS_OWNER_TOKEN
-    owner = os.environ.get(_OWNER_ENVIRONMENT_NAME)
-    if owner is None or re.fullmatch(r"[0-9a-f]{64}", owner) is None:
-        return 1
-    try:
-        root = root.resolve(strict=True)
-        private_environment = _private_execution_environment(root)
-    except OSError:
-        return 1
-    os.environ.clear()
-    os.environ.update(
-        {
-            **private_environment,
-            _OWNER_ENVIRONMENT_NAME: owner,
-        }
-    )
-    _PRIVATE_EXECUTION_ENVIRONMENT = private_environment
-    tempfile.tempdir = private_environment["TMPDIR"]
-    _ACTIVE_PROCESS_LEDGER = root / "process-groups"
-    _ACTIVE_PROCESS_GROUPS = {}
-    _PROCESS_OWNER_TOKEN = owner
-    _publish_process_groups(_ACTIVE_PROCESS_LEDGER, _ACTIVE_PROCESS_GROUPS)
-    workflow: DisposablePublicBasePathMigrationWorkflow | None = None
-    cleanup_ok = True
-    try:
-        live_state = _file_state(live_registry)
-        external_state = _file_state(external_data)
-        workflow = DisposablePublicBasePathMigrationWorkflow(
-            root,
-            platform,
+class PublicBasePathMigrationWorkflowVerifier:
+    """Run the real migration inside private directories and a bounded worker."""
+
+    def __init__(
+        self,
+        *,
+        platform_repository=PLATFORM_REPOSITORY,
+        coding_root=CODING_ROOT,
+        emit=print,
+        supervision_timeout=300,
+        live_registry=None,
+        external_data=None,
+        scenario="normal",
+    ):
+        self.platform = Path(platform_repository).resolve()
+        self.coding_root = Path(coding_root)
+        self.emit, self.timeout = emit, supervision_timeout
+        self.live_registry, self.external_data, self.scenario = (
+            live_registry,
             external_data,
-            scenario=scenario,
+            scenario,
         )
-        for index, phase in enumerate(PHASES[:-1]):
-            workflow.run_phase(phase)
-            if not _immutable_unchanged(
-                live_registry, live_state
-            ) or not _immutable_unchanged(external_data, external_state):
-                raise RuntimeError("immutable sentinel changed")
-            if failure_phase == phase:
-                raise RuntimeError("injected disposable phase failure")
-            print(f"PASS {index}", flush=True)
-    except BaseException:
-        return_code = 1
-    else:
-        return_code = 0
-    finally:
-        if workflow is not None:
-            try:
-                workflow.close()
-            except BaseException:
-                cleanup_ok = False
-        cleanup_ok = cleanup_ok and not _ACTIVE_PROCESS_GROUPS
-        if failure_phase == PHASES[-1]:
-            cleanup_ok = False
-        print(f"CLEAN {'PASS' if cleanup_ok else 'FAIL'}", flush=True)
-    return return_code if cleanup_ok else 1
+
+    def run(self) -> int:
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix=".migration-", dir=self.coding_root
+            ) as directory:
+                parent = Path(directory).resolve(strict=True)
+                root = parent / "workflow"
+                root.mkdir()
+                guard = self.live_registry or _create_disposable_guard_profile(parent)
+                before = (Path(guard).read_bytes(), Path(guard).stat().st_mode)
+                external = (
+                    Path(self.external_data)
+                    if self.external_data
+                    else parent / "state.json"
+                )
+                if self.external_data is None:
+                    external.write_bytes(_DATA_SENTINEL)
+                external_before = _file_state(external)
+                build_ui_package(self.platform, root / "local-web-ui.tgz")
+                command = (
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--worker",
+                    str(root),
+                    str(self.platform),
+                    str(external),
+                    self.scenario,
+                )
+                result = _run_bounded_process(
+                    command,
+                    cwd=self.platform,
+                    env=_private_execution_environment(root),
+                    timeout=self.timeout,
+                    worker=True,
+                )
+                if result.returncode:
+                    raise RuntimeError(result.stdout[-2000:])
+                if before != (Path(guard).read_bytes(), Path(guard).stat().st_mode):
+                    raise RuntimeError("disposable guard changed")
+                if _file_state(external) != external_before:
+                    raise RuntimeError("external application data changed")
+                self.emit(result.stdout.rstrip())
+            return 0
+        except Exception as error:
+            self.emit(f"migration FAIL: {error}")
+            return 1
+
+
+def _worker_main(root: Path, platform: Path, external: Path, scenario: str) -> int:
+    os.environ.clear()
+    os.environ.update(_private_execution_environment(root))
+    tempfile.tempdir = os.environ["TMPDIR"]
+    with inherit_worker_session():
+        workflow = DisposablePublicBasePathMigrationWorkflow(
+            root, platform, external, scenario=scenario
+        )
+        try:
+            for phase in PHASES[:-1]:
+                workflow.run_phase(phase)
+                print(f"{phase} PASS", flush=True)
+        finally:
+            workflow.close()
+        return 0
 
 
 def main() -> int:
-    if len(sys.argv) == 8 and sys.argv[1] == "--worker":
-        failure_phase = None if sys.argv[6] == "-" else sys.argv[6]
-        if failure_phase is not None and failure_phase not in PHASES:
-            return 1
-        if sys.argv[7] not in _SCENARIOS:
-            return 1
+    if len(sys.argv) == 6 and sys.argv[1] == "--worker":
         return _worker_main(
-            Path(sys.argv[2]),
-            Path(sys.argv[3]),
-            Path(sys.argv[4]),
-            Path(sys.argv[5]),
-            failure_phase,
-            sys.argv[7],
+            Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5]
         )
     return PublicBasePathMigrationWorkflowVerifier().run()
 
