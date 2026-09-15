@@ -43,7 +43,7 @@ def _tree_snapshot(root: Path) -> tuple[tuple[str, bytes, int], ...]:
                 path.stat().st_mode,
             )
             for path in root.rglob("*")
-            if path.is_file() and ".git" not in path.parts
+            if path.is_file()
         )
     )
 
@@ -401,46 +401,7 @@ class FleetUpdaterTests(unittest.TestCase):
         self.runtime.mkdir()
         self.sentinel = self.runtime / "sentinel"
         self.sentinel.write_bytes(b"runtime remains untouched\n")
-        self.repositories = {
-            app_id: self.make_repository(app_id, platform=platform)
-            for app_id, platform in (
-                ("current-app", True),
-                ("ready-app", True),
-                ("legacy-app", False),
-                ("foundation-app", True),
-                ("dirty-app", True),
-                ("non-main-app", True),
-                ("invalid-app", True),
-                ("failing-app", True),
-            )
-        }
-        outer_repository = self.make_repository("outer-app", platform=True)
-        nested_repository = outer_repository / "nested"
-        nested_repository.mkdir()
-        self.repositories["nested-app"] = nested_repository
-        (self.repositories["dirty-app"] / "private-note.txt").write_bytes(
-            b"dirty\n"
-        )
-        self.git(self.repositories["non-main-app"], "switch", "-c", "feature")
-        (self.repositories["invalid-app"] / "local-web.json").write_bytes(
-            b"{invalid\n"
-        )
-        self.git(self.repositories["invalid-app"], "add", "local-web.json")
-        self.git(self.repositories["invalid-app"], "commit", "-m", "malformed manifest")
-        self.registry_path = self.write_registry(
-            (
-                "current-app",
-                "ready-app",
-                "legacy-app",
-                "foundation-app",
-                "dirty-app",
-                "non-main-app",
-                "unavailable-app",
-                "nested-app",
-                "invalid-app",
-                "failing-app",
-            )
-        )
+        self.repositories: dict[str, Path] = {}
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -454,7 +415,7 @@ class FleetUpdaterTests(unittest.TestCase):
             text=True,
         ).stdout
 
-    def make_repository(self, app_id: str, *, platform: bool) -> Path:
+    def make_app(self, app_id: str, *, platform: bool = True) -> Path:
         repository = self.root / app_id
         repository.mkdir()
         manifest = {
@@ -493,6 +454,10 @@ class FleetUpdaterTests(unittest.TestCase):
             json.dumps(manifest), encoding="utf-8"
         )
         (repository / "tracked.txt").write_bytes(b"base\n")
+        return repository.resolve()
+
+    def make_repository(self, app_id: str, *, platform: bool) -> Path:
+        repository = self.make_app(app_id, platform=platform)
         self.git(repository, "init", "--initial-branch=main")
         self.git(repository, "add", "--all")
         self.git(
@@ -546,6 +511,40 @@ class FleetUpdaterTests(unittest.TestCase):
         )
 
     def test_preview_classifies_registered_apps_in_order_without_writing(self):
+        self.repositories = {
+            app_id: self.make_app(app_id, platform=platform)
+            for app_id, platform in (
+                ("current-app", True),
+                ("ready-app", True),
+                ("legacy-app", False),
+                ("foundation-app", True),
+                ("dirty-app", True),
+                ("non-main-app", True),
+                ("invalid-app", True),
+                ("failing-app", True),
+                ("nested-app", True),
+            )
+        }
+        (self.repositories["invalid-app"] / "local-web.json").write_bytes(
+            b"{invalid\n"
+        )
+        registry_path = self.write_registry(
+            (
+                "current-app",
+                "ready-app",
+                "legacy-app",
+                "foundation-app",
+                "dirty-app",
+                "non-main-app",
+                "unavailable-app",
+                "nested-app",
+                "invalid-app",
+                "failing-app",
+            )
+        )
+        # Repository validity belongs to the injected committer; this test owns
+        # classification, order and read-only orchestration.
+        heads = {repository: "a" * 40 for repository in self.repositories.values()}
         ready_change = FileChange(
             Path("vendor/local-web-ui.tgz"), b"old\n", b"new\n"
         )
@@ -564,15 +563,7 @@ class FleetUpdaterTests(unittest.TestCase):
             {self.repositories["failing-app"]},
         )
         committer = _Committer(
-            {
-                repository: self.git(repository, "rev-parse", "HEAD").strip()
-                for repository in self.repositories.values()
-                if repository not in {
-                    self.repositories["dirty-app"],
-                    self.repositories["non-main-app"],
-                    self.repositories["nested-app"],
-                }
-            },
+            heads,
             {
                 self.repositories["dirty-app"]: "repository-not-clean",
                 self.repositories["non-main-app"]: "repository-not-main",
@@ -580,28 +571,21 @@ class FleetUpdaterTests(unittest.TestCase):
                 self.repositories["nested-app"]: "repository-unavailable",
             },
         )
-        before_registry = self.registry_path.read_bytes()
+        before_registry = registry_path.read_bytes()
         before_tree = _tree_snapshot(self.root)
-        before_status = {
-            app_id: self.git(
-                repository, "status", "--porcelain=v1", "--ignored=matching"
-            )
-            for app_id, repository in self.repositories.items()
-        }
         before_sentinel = self.sentinel.read_bytes()
 
-        plan = FleetUpdater(
-            updater_factory=lambda: updater,
-            activator_factory=lambda _registry: _PlanningActivator(),
-            committer=committer,
-            live_inspector=_LiveInspector(
-                self.repositories,
-                {
-                    repository: self.git(repository, "rev-parse", "HEAD").strip()
-                    for repository in self.repositories.values()
-                },
-            ),
-        ).preview(self.registry_path)
+        with patch("subprocess.run") as run:
+            plan = FleetUpdater(
+                updater_factory=lambda: updater,
+                activator_factory=lambda _registry: _PlanningActivator(),
+                committer=committer,
+                live_inspector=_LiveInspector(
+                    self.repositories,
+                    heads,
+                ),
+            ).preview(registry_path)
+        run.assert_not_called()
 
         self.assertEqual(
             [(item.app_id, item.status, item.reason) for item in plan.apps],
@@ -646,24 +630,16 @@ class FleetUpdaterTests(unittest.TestCase):
         )
         self.assertEqual(
             plan.apps[0].source_head,
-            self.git(self.repositories["current-app"], "rev-parse", "HEAD").strip(),
+            heads[self.repositories["current-app"]],
         )
         self.assertEqual(plan.apps[1].paths, (Path("vendor/local-web-ui.tgz"),))
-        self.assertEqual(self.registry_path.read_bytes(), before_registry)
+        self.assertEqual(registry_path.read_bytes(), before_registry)
         self.assertEqual(_tree_snapshot(self.root), before_tree)
-        self.assertEqual(
-            {
-                app_id: self.git(
-                    repository, "status", "--porcelain=v1", "--ignored=matching"
-                )
-                for app_id, repository in self.repositories.items()
-            },
-            before_status,
-        )
         self.assertEqual(self.sentinel.read_bytes(), before_sentinel)
 
     def test_preview_skips_a_plan_that_requires_foundation_adoption(self):
-        repository = self.repositories["foundation-app"]
+        repository = self.make_app("foundation-app")
+        self.repositories["foundation-app"] = repository
         updater = _Updater(
             {
                 repository: self.update_plan(
@@ -675,9 +651,7 @@ class FleetUpdaterTests(unittest.TestCase):
             },
             set(),
         )
-        committer = _Committer(
-            {repository: self.git(repository, "rev-parse", "HEAD").strip()}
-        )
+        committer = _Committer({repository: "a" * 40})
         registry_path = self.write_registry(("foundation-app",))
 
         plan = FleetUpdater(
@@ -686,7 +660,7 @@ class FleetUpdaterTests(unittest.TestCase):
             committer=committer,
             live_inspector=_LiveInspector(
                 self.repositories,
-                {repository: self.git(repository, "rev-parse", "HEAD").strip()},
+                {repository: "a" * 40},
             ),
         ).preview(registry_path)
 
@@ -697,7 +671,8 @@ class FleetUpdaterTests(unittest.TestCase):
         self.assertFalse(committer.commit_called)
 
     def test_preview_uses_the_inspector_outcome_without_its_own_git_commands(self):
-        repository = self.repositories["current-app"]
+        repository = self.make_app("current-app")
+        self.repositories["current-app"] = repository
         registry_path = self.write_registry(("current-app",))
 
         with patch("subprocess.run") as run:
@@ -798,13 +773,12 @@ class FleetUpdaterTests(unittest.TestCase):
         )
 
     def test_preview_skips_pending_registry_transition_before_app_mutation(self):
-        repository = self.repositories["ready-app"]
+        repository = self.make_app("ready-app")
+        self.repositories["ready-app"] = repository
         updater = _Updater(
             {repository: self.make_refresh_plan("ready-app")}, set()
         )
-        committer = _Committer(
-            {repository: self.git(repository, "rev-parse", "HEAD").strip()}
-        )
+        committer = _Committer({repository: "a" * 40})
         activator = _PlanningActivator({repository})
         registry = self.write_registry(("ready-app",))
 
@@ -814,7 +788,7 @@ class FleetUpdaterTests(unittest.TestCase):
             committer=committer,
             live_inspector=_LiveInspector(
                 self.repositories,
-                {repository: self.git(repository, "rev-parse", "HEAD").strip()},
+                {repository: "a" * 40},
             ),
         ).preview(registry)
 
@@ -895,14 +869,12 @@ class FleetUpdaterTests(unittest.TestCase):
         ):
             with self.subTest(case=case):
                 app_id = f"current-live-{case}"
-                repository = self.make_repository(app_id, platform=True)
+                repository = self.make_app(app_id)
                 self.repositories[app_id] = repository
                 updater = _Updater(
                     {repository: self.update_plan(app_id, "current")}, set()
                 )
-                committer = _Committer(
-                    {repository: self.git(repository, "rev-parse", "HEAD").strip()}
-                )
+                committer = _Committer({repository: "a" * 40})
                 plan = FleetUpdater(
                     updater_factory=lambda: updater,
                     activator_factory=lambda _registry: _PlanningActivator(),
@@ -919,10 +891,11 @@ class FleetUpdaterTests(unittest.TestCase):
                 self.assertNotIn("private", plan.apps[0].reason or "")
 
     def test_current_and_ready_plans_carry_source_and_live_commits_separately(self):
-        current = self.repositories["current-app"]
-        ready = self.repositories["ready-app"]
-        current_head = self.git(current, "rev-parse", "HEAD").strip()
-        ready_head = self.git(ready, "rev-parse", "HEAD").strip()
+        current = self.make_app("current-app")
+        ready = self.make_app("ready-app")
+        self.repositories = {"current-app": current, "ready-app": ready}
+        current_head = "a" * 40
+        ready_head = "b" * 40
         updater = _Updater(
             {
                 current: self.update_plan("current-app", "current"),
@@ -1016,6 +989,16 @@ class FleetUpdaterTests(unittest.TestCase):
                 self.assertIn(("update", later_id), events)
 
     def test_apply_updates_only_ready_apps_in_order_and_verifies_exact_commits(self):
+        self.repositories = {
+            app_id: self.make_repository(app_id, platform=platform)
+            for app_id, platform in (
+                ("current-app", True),
+                ("ready-app", True),
+                ("legacy-app", False),
+                ("dirty-app", True),
+            )
+        }
+        (self.repositories["dirty-app"] / "private-note.txt").write_bytes(b"dirty\n")
         later = self.make_repository("later-ready-app", platform=True)
         self.repositories["later-ready-app"] = later
         ready = self.repositories["ready-app"]
