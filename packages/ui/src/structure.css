@@ -131,6 +131,16 @@
     gap: var(--lwp-space-2);
   }
 
+  .lwp-platform-version {
+    flex: none;
+    color: var(--lwp-colour-text-muted);
+    font-family: var(--lwp-font-mono);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
   .lwp-offline-notice {
     display: flex;
     grid-column: 1 / -1;

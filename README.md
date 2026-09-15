@@ -139,6 +139,10 @@ bin/local-web app create example-service \
 
 The generator creates a React/Vite foundation with the shared shell, manifest,
 context-export adapter, local checks, browser tests, and vendored UI package.
+The shell automatically shows that vendored `@local-web/ui` release as a compact
+`vX.Y.Z` label immediately before its right-hand controls. This identifies the
+shared interface version, not the application's domain version or deployed Git
+revision.
 From the new repository:
 
 ```sh

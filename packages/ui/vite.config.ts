@@ -1,8 +1,15 @@
 import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 
+const packageMetadata = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+) as { version: string };
+
 export default defineConfig({
   root: new URL('.', import.meta.url).pathname,
+  define: {
+    __LOCAL_WEB_UI_VERSION__: JSON.stringify(packageMetadata.version),
+  },
   plugins: [{
     name: 'local-web-vite-descriptor-types',
     generateBundle() {

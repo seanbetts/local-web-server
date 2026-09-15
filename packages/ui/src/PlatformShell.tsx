@@ -7,6 +7,8 @@ import type { ContextExportBuilder, ContextJson } from './contextExportModel.js'
 import type { InteractiveExportDefinition } from './interactiveExportModel.js';
 import { OfflineSnapshotNotice, useInteractiveExportEnvironment } from './interactiveExportEnvironment.js';
 
+declare const __LOCAL_WEB_UI_VERSION__: string;
+
 export type AppIdentity = {
   id: string;
   name: string;
@@ -38,6 +40,15 @@ export type PlatformShellProps = PropsWithChildren<{
   buildContextExport?: ContextExportBuilder;
   interactiveExport?: InteractiveExportDefinition<ContextJson, ContextJson>;
 }>;
+
+export function PlatformVersion(): ReactElement {
+  const label = `Local Web UI version ${__LOCAL_WEB_UI_VERSION__}`;
+  return (
+    <span className="lwp-platform-version" aria-label={label} title={label}>
+      v{__LOCAL_WEB_UI_VERSION__}
+    </span>
+  );
+}
 
 const exportControlOwner = (location: PlatformLocation): string => {
   if (location.kind === 'index') {
@@ -108,22 +119,19 @@ export function PlatformShell({
             ) : null}
           </ol>
         </nav>
-        {!offline && (headerUtility || ((buildContextExport || interactiveExport) && !indexCurrent)) ? (
-          <div className="lwp-platform-shell__header-actions">
-            {headerUtility}
-            {(buildContextExport || interactiveExport) && !indexCurrent ? (
-              <InteractiveExportControl
-                key={exportControlOwner(location)}
-                app={location.app}
-                buildContextExport={buildContextExport}
-                interactiveExport={interactiveExport}
-              />
-            ) : null}
-            <ThemeControl />
-          </div>
-        ) : (
+        <div className="lwp-platform-shell__header-actions">
+          <PlatformVersion />
+          {!offline ? headerUtility : null}
+          {!offline && (buildContextExport || interactiveExport) && !indexCurrent ? (
+            <InteractiveExportControl
+              key={exportControlOwner(location)}
+              app={location.app}
+              buildContextExport={buildContextExport}
+              interactiveExport={interactiveExport}
+            />
+          ) : null}
           <ThemeControl />
-        )}
+        </div>
         <OfflineSnapshotNotice />
       </header>
       <main

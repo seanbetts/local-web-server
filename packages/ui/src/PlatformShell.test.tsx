@@ -190,6 +190,24 @@ describe('PlatformShell', () => {
     expect(screen.getByRole('main')).toHaveClass('lwp-platform-shell__main--contained');
   });
 
+  it('shows the shared UI version before the System Index header controls', () => {
+    const { container } = render(
+      <PlatformShell location={{ kind: 'index' }} headerUtility={<a href="/help">Help</a>}>
+        <h1>System Index</h1>
+      </PlatformShell>,
+    );
+
+    const headerActions = container.querySelector('.lwp-platform-shell__header-actions');
+    const version = screen.getByLabelText('Local Web UI version 0.7.1');
+    const help = screen.getByRole('link', { name: 'Help' });
+    const theme = screen.getByRole('group', { name: 'Colour mode' });
+
+    expect(headerActions).not.toBeNull();
+    expect(version).toHaveTextContent('v0.7.1');
+    expect(version.parentElement).toBe(headerActions);
+    expect([...headerActions!.children]).toEqual([version, help, theme]);
+  });
+
   it('links from an app location back to System Index and marks the app current', () => {
     const { container } = render(
       <PlatformShell
@@ -266,6 +284,7 @@ it('makes offline platform location inert and removes hosted utility/export cont
   );
   expect(within(screen.getByRole('navigation', { name: 'Location' })).queryAllByRole('link')).toHaveLength(0);
   expect(screen.queryAllByRole('button', { name: /export|Hosted utility/i })).toHaveLength(0);
+  expect(screen.getByLabelText('Local Web UI version 0.7.1')).toHaveTextContent('v0.7.1');
   expect(screen.getByText('Offline snapshot')).toBeVisible();
   expect(screen.getByRole('link', { name: 'Skip to Briefing content' })).toHaveAttribute('href', '#lwp-main');
 });

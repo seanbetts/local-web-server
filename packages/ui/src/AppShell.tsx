@@ -2,6 +2,7 @@ import type { FocusEvent, PropsWithChildren, ReactNode } from 'react';
 
 import {
   PlatformShell,
+  PlatformVersion,
   type AppIdentity,
   type AppPageLocation,
   type PlatformContentMode,
@@ -67,6 +68,7 @@ function LegacyAppShell({
           </nav>
         ) : null}
         <div className="lwp-app-shell__end">
+          <PlatformVersion />
           {actions && !offline ? (
             <div
               className="lwp-app-shell__actions-viewport"

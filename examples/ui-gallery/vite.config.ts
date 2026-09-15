@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
 const candidateRoute = '/candidate-theme.css';
+const uiPackage = JSON.parse(
+  readFileSync(new URL('../../packages/ui/package.json', import.meta.url), 'utf8'),
+) as { version: string };
 
 const candidateTheme = () => ({
   name: 'local-web-candidate-theme',
@@ -24,6 +27,9 @@ const candidateTheme = () => ({
 export default defineConfig(({ command }) => ({
   root: new URL('.', import.meta.url).pathname,
   base: command === 'build' ? '/_local-web/platform/ui-gallery/' : '/',
+  define: {
+    __LOCAL_WEB_UI_VERSION__: JSON.stringify(uiPackage.version),
+  },
   plugins: [candidateTheme()],
   resolve: {
     alias: [

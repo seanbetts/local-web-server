@@ -11,5 +11,5 @@
   },
   "healthPath": "/interactive-export-fixture/",
   "home": { "icon": "checklist", "accent": "#3859D6" },
-  "platform": { "contractVersion": 1, "templateVersion": 3, "uiVersion": "0.7.0", "capabilities": [] }
+  "platform": { "contractVersion": 1, "templateVersion": 3, "uiVersion": "0.7.1", "capabilities": [] }
 }

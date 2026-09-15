@@ -95,6 +95,12 @@ API and health proxy handlers do not receive the frontend policy.
 context download, and optional interactive-export packaging. Domain components
 stay in each app.
 
+Every platform shell renders the version of its compiled `@local-web/ui` package
+immediately before the right-hand header controls. The package metadata is the
+single version source, so applications do not pass or maintain this value. The
+label identifies the shared UI reader—including inside an offline snapshot—and
+does not claim an application version, source revision, or live-release commit.
+
 Context export is an inert, validated `LocalWebContextV1` document. Interactive
 export is optional and packages one validated runtime snapshot into a dedicated
 self-contained offline reader. Snapshot data and view state remain distinct;

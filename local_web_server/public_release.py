@@ -218,19 +218,19 @@ _APPROVED_ASSET_DIGESTS = {
         "1aa9e87aaa312497ab98aa78c4f1c4abef091500dd21791867c8c6ba1486345f"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-dark-desktop.png": (
-        "94a0d2dce38184524c2bc7f9d4ddb15644a4e710f2cfbaa6ff5bf12cf1fb62da"
+        "5b2da8f8b65b91df1982b61df41b4c9b7c7433ca47f4cf551a15d52a1538538e"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-dark-mobile.png": (
-        "f1ca58936c940751c974f945e9689b710b20478bbc92845c52c117304ffcd509"
+        "514254b9c4ae3801273e3f8439ef6cb121b1a7a3fa3bc56de00690c850db10b7"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-light-compact.png": (
         "7ae3a8f8ab20fbbd700dab56239fbc1883a9701d9f244981dc3456f22c907ee5"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-light-desktop.png": (
-        "3ea59869bfa40a905e6b16ad382ea1900c5703ecd1f170e703502c284969ca06"
+        "a43b671e0c78ca40dd8c0d01bff382d661e3f1b77eb91c025af877b0e625f40f"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-light-mobile.png": (
-        "b08ec6661c1dc512ee2a53b8fe78bf432910dd53677fb21f383cb8563fc2cd5d"
+        "0b7a066378ed18f444dfb8986f7c2819333d3a8aea7c87362f70fe7d441a6bf6"
     ),
 }
 _APPROVED_ASSET_PATHS = frozenset(_APPROVED_ASSET_DIGESTS)
