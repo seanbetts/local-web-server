@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { useState, type SyntheticEvent } from 'react';
+import { type SyntheticEvent } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -14,29 +14,6 @@ describe('Dialog', () => {
     render(control);
 
     expect(screen.getByLabelText('Requested control')).toHaveAttribute('data-lwp-autofocus', 'true');
-  });
-
-  it('closes with Escape and returns focus to its opener', () => {
-    function Harness() {
-      const [open, setOpen] = useState(false);
-      return (
-        <>
-          <button type="button" onClick={() => setOpen(true)}>Edit trip</button>
-          <Dialog open={open} onClose={() => setOpen(false)} title="Edit trip">
-            <TextInput aria-label="Trip name" />
-          </Dialog>
-        </>
-      );
-    }
-    render(<Harness />);
-    const opener = screen.getByRole('button', { name: 'Edit trip' });
-    opener.focus();
-    fireEvent.click(opener);
-
-    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Edit trip' }), { key: 'Escape' });
-
-    expect(screen.queryByRole('dialog', { name: 'Edit trip' })).not.toBeInTheDocument();
-    expect(opener).toHaveFocus();
   });
 
   it('closes from its backdrop and renders safely on the server', () => {

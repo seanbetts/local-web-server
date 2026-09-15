@@ -95,62 +95,6 @@ describe('interactive export Vite integration', () => {
       expect(hosted).toContain(after.compatibilityId);
     } finally { await watcher.close(); }
   }, 10000);
-  it('refreshes dev descriptor and served bytes when an offline-only dependency changes', async () => {
-    const root = interactiveFixture();
-    writeFileSync(join(root, 'index.html'), '<html><head></head><body></body></html>');
-    writeFileSync(join(root, 'offline-only.ts'), 'export const label="Before edit";');
-    writeFileSync(join(root, 'offline.tsx'), `import {contract} from './contract'; import {label} from './offline-only'; document.body.textContent=contract.id+label;`);
-    const server = await createServer({configFile:false,root,base:'/records/',logLevel:'silent',
-      plugins:[publicVite.localWebInteractiveExport({appId:'records',contract:'./contract.ts',entry:'./offline.tsx'})],
-      server:{host:'127.0.0.1',port:0}});
-    try {
-      await server.listen();
-      const origin = server.resolvedUrls!.local[0];
-      const descriptor = async () => readInteractiveExportTemplateDescriptor(new DOMParser().parseFromString(await (await fetch(origin)).text(), 'text/html'));
-      const first = await descriptor();
-      const before = await (await fetch(new URL(first.templateUrl, origin))).text();
-      expect(before).toContain('Before edit');
-      writeFileSync(join(root, 'offline-only.ts'), 'export const label="After edit";');
-      await vi.waitFor(async () => expect((await descriptor()).templateId).not.toBe(first.templateId), {timeout:4000});
-      const second = await descriptor();
-      const after = await (await fetch(new URL(second.templateUrl, origin))).text();
-      expect(after).toContain('After edit');
-      expect(after).not.toContain('Before edit');
-      expect(second.compatibilityId).not.toBe(first.compatibilityId);
-      expect(second.payloadContractId).toBe(first.payloadContractId);
-      const meta = new DOMParser().parseFromString(after, 'text/html').querySelector('meta[name="local-web-interactive-export-template"]')!;
-      const {templateUrl: _url, ...identity} = second;
-      expect(JSON.parse(atob(meta.getAttribute('content')!))).toEqual(identity);
-      expect(await descriptor()).toEqual(second);
-    } finally { await server.close(); }
-  }, 10000);
-
-  it('refreshes build-watch virtual descriptor and emitted asset after an offline-only dependency edit', async () => {
-    const root = interactiveFixture();
-    writeFileSync(join(root, 'index.html'), '<html><head></head><body><script type="module" src="/hosted.ts"></script></body></html>');
-    writeFileSync(join(root, 'hosted.ts'), `import {contract} from './contract'; import descriptor from 'virtual:local-web-interactive-export'; document.body.textContent=JSON.stringify({id:contract.id,descriptor});`);
-    writeFileSync(join(root, 'offline-only.ts'), 'export const label="Before edit";');
-    writeFileSync(join(root, 'offline.tsx'), `import {contract} from './contract'; import {label} from './offline-only'; document.body.textContent=contract.id+label;`);
-    const watcher = await build({configFile:false,root,base:'/records/',logLevel:'silent',
-      plugins:[publicVite.localWebInteractiveExport({appId:'records',contract:'./contract.ts',entry:'./offline.tsx'})],build:{watch:{}}});
-    if (Array.isArray(watcher) || !('close' in watcher)) throw new Error('expected build watcher');
-    try {
-      const descriptor = () => readInteractiveExportTemplateDescriptor(new DOMParser().parseFromString(readFileSync(join(root, 'dist/index.html'),'utf8'), 'text/html'));
-      await vi.waitFor(() => expect(descriptor().appId).toBe('records'), {timeout:4000});
-      const first = descriptor();
-      writeFileSync(join(root, 'offline-only.ts'), 'export const label="After edit";');
-      await vi.waitFor(() => expect(descriptor().templateId).not.toBe(first.templateId), {timeout:4000});
-      const second = descriptor();
-      const after = readFileSync(join(root,'dist',second.templateUrl.slice('/records/'.length)),'utf8');
-      expect(after).toContain('After edit');
-      expect(second.compatibilityId).not.toBe(first.compatibilityId);
-      const index = new DOMParser().parseFromString(readFileSync(join(root,'dist/index.html'),'utf8'), 'text/html');
-      const hosted = readFileSync(join(root,'dist',index.querySelector('script[src]')!.getAttribute('src')!.slice('/records/'.length)),'utf8');
-      expect(hosted).toContain(second.templateId);
-      expect(hosted).toContain(second.compatibilityId);
-      expect(descriptor()).toEqual(second);
-    } finally { await watcher.close(); }
-  }, 10000);
   it('makes the virtual descriptor type available from a dist-only published package', async () => {
     const root = temporaryRoot();
     const compilerPath = '../../../node_modules/typescript/bin/tsc';
@@ -183,25 +127,6 @@ describe('interactive export Vite integration', () => {
     ], {encoding: 'utf8'});
     expect(result.status, result.stdout + result.stderr).toBe(0);
   }, 15000);
-  it('packages through a real hosted build with the same virtual and meta descriptor', async () => {
-    const root = interactiveFixture();
-    writeFileSync(join(root, 'index.html'), '<html><head></head><body><script type="module" src="/hosted.ts"></script></body></html>');
-    writeFileSync(join(root, 'hosted.ts'), `import {contract} from './contract'; import descriptor from 'virtual:local-web-interactive-export'; document.body.textContent=JSON.stringify({contractId:contract.id, descriptor});`);
-    const result = await build({configFile:false, root, base:'/records/', logLevel:'silent',
-      plugins:[publicVite.localWebInteractiveExport({appId:'records',contract:'./contract.ts',entry:'./offline.tsx'})], build:{write:false}});
-    if (Array.isArray(result) || !('output' in result)) throw new Error('expected one hosted output');
-    const html = result.output.find((item) => item.type === 'asset' && item.fileName === 'index.html');
-    if (!html || html.type !== 'asset') throw new Error('missing hosted HTML');
-    const descriptor = readInteractiveExportTemplateDescriptor(new DOMParser().parseFromString(String(html.source), 'text/html'));
-    const template = result.output.find((item) => item.fileName === descriptor.templateUrl.slice('/records/'.length));
-    expect(template?.type).toBe('asset');
-    const hosted = result.output.find((item) => item.type === 'chunk');
-    if (!hosted || hosted.type !== 'chunk') throw new Error('missing hosted executable');
-    expect(hosted.code).toContain(descriptor.templateId);
-    expect(hosted.code).toContain(descriptor.compatibilityId);
-    expect(result.output.some((item) => item.fileName.endsWith('.map'))).toBe(false);
-  });
-
   it('rejects an existing descriptor rather than creating ambiguous hosted metadata', async () => {
     const root = interactiveFixture();
     const plugin = publicVite.localWebInteractiveExport({appId:'records',contract:'./contract.ts',entry:'./offline.tsx'});

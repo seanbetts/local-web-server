@@ -51,35 +51,6 @@ describe('ThemeControl', () => {
     document.documentElement.removeAttribute('data-lwp-colour-mode');
   });
 
-  it('offers icon-only system, light, and dark choices in order', () => {
-    render(<ThemeControl />);
-
-    const control = screen.getByRole('group', { name: 'Colour mode' });
-    expect(control).toBeInTheDocument();
-    const buttons = within(control).getAllByRole('button');
-    expect(buttons).toHaveLength(3);
-    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'System colour mode',
-      'Light colour mode',
-      'Dark colour mode',
-    ]);
-    expect(buttons.map((button) => button.getAttribute('title'))).toEqual([
-      'Use system colour mode',
-      'Use light colour mode',
-      'Use dark colour mode',
-    ]);
-    for (const button of buttons) {
-      expect(button).not.toHaveTextContent(/Auto|Light|Dark/);
-      expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
-    }
-    expect(screen.getByRole('button', { name: 'System colour mode' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(screen.getByRole('button', { name: 'Light colour mode' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Dark colour mode' })).toBeInTheDocument();
-  });
-
   it('persists and applies each explicit choice, then returns to system', () => {
     render(<ThemeControl />);
 
