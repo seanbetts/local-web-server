@@ -8,6 +8,7 @@ import time
 import unittest
 from pathlib import Path
 
+from local_web_server import git_runner
 from scripts.migration_fixture import private_environment, process_exists, run_bounded
 from scripts.verify_service_command_migration import (
     ServiceCommandMigrationWorkflowVerifier,
@@ -61,48 +62,41 @@ class MigrationFixtureTests(unittest.TestCase):
                                 pass
                             pid_file.unlink()
 
-    def test_outer_timeout_reaps_a_production_git_runner_child(self):
+    def test_production_git_child_inherits_worker_process_group(self):
+        # The common runner test owns timeout cleanup; this checks that the
+        # production Git child remains inside the group that runner will reap.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
-            pid_file = root / "git.pid"
             fake_git = root / "git"
             fake_git.write_text(
-                f"#!{sys.executable}\nimport os,time\nfrom pathlib import Path\n"
-                f"Path({str(pid_file)!r}).write_text(str(os.getpid()))\ntime.sleep(30)\n"
+                f"#!{sys.executable}\nimport os\nprint(os.getpgrp())\n"
             )
             fake_git.chmod(0o700)
             source = Path(__file__).resolve().parents[1]
             program = (
-                f"import sys; sys.path.insert(0, {str(source)!r})\n"
+                f"import os, sys; sys.path.insert(0, {str(source)!r})\n"
                 "from pathlib import Path\n"
                 "from local_web_server import git_runner\n"
                 "from scripts.migration_fixture import inherit_worker_session\n"
                 f"git_runner._git_executable = lambda: {str(fake_git)!r}\n"
                 "with inherit_worker_session():\n"
-                f"    git_runner.run_git(Path({str(root)!r}), ('status',), maximum_stdout=1024)\n"
+                f"    result = git_runner.run_git(Path({str(root)!r}), ('status',), maximum_stdout=1024)\n"
+                "assert result.returncode == 0\n"
+                "print(os.getpgrp(), result.stdout.strip())\n"
             )
-            try:
-                with self.assertRaisesRegex(RuntimeError, "time bound"):
-                    run_bounded(
-                        (sys.executable, "-c", program),
-                        cwd=root,
-                        env=private_environment(root),
-                        timeout=0.5,
-                        worker=True,
-                    )
-                pid = int(pid_file.read_text())
-                deadline = time.monotonic() + 2
-                while process_exists(pid) and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertFalse(
-                    process_exists(pid), "production runner child survived cleanup"
-                )
-            finally:
-                if pid_file.exists():
-                    try:
-                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+            result = run_bounded(
+                (sys.executable, "-c", program),
+                cwd=root,
+                env=private_environment(root),
+                # Use the normal Git command budget for setup, not a deadline
+                # intended to interrupt the worker before its imports complete.
+                timeout=git_runner._GIT_TIMEOUT_SECONDS,
+                worker=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            worker_group, child_group = map(int, result.stdout.split())
+            self.assertNotEqual(worker_group, os.getpgrp())
+            self.assertEqual(child_group, worker_group)
 
     def test_worker_environment_excludes_parent_secrets_and_uses_private_paths(self):
         with tempfile.TemporaryDirectory() as directory:
