@@ -65,7 +65,8 @@ EXPECTED_PHASES = (
 _MAX_OUTPUT = 4096
 _TIMEOUT = 0.2
 _CHECK_PORT = 43129
-_SERVICE_START_TIMEOUT_SECONDS = 10.0
+_SERVICE_START_TIMEOUT_SECONDS = 30.0
+_SERVICE_START_ATTEMPTS = 3
 _PRIVATE_MARKER = "PRIVATE-FLEET-WORKFLOW-DETAIL"
 _LAST_PROBE_PROCESS_GROUP: int | None = None
 _LAST_PROBE_DESCENDANT: int | None = None
@@ -330,7 +331,6 @@ class _PrivateHttpService:
                 raise RuntimeError(_PRIVATE_MARKER)
             self.check(identity)
             return
-        port = _private_loopback_port()
         try:
             if expand_service_command_template(
                 identity.command_template,
@@ -339,52 +339,63 @@ class _PrivateHttpService:
                 repository=repository,
             ) != identity.composed_command:
                 raise RuntimeError(_PRIVATE_MARKER)
-            rendered = expand_service_command_template(
-                identity.command_template,
-                port=port,
-                release=identity.working_directory,
-                repository=repository,
-            )
         except ValueError:
             raise RuntimeError(_PRIVATE_MARKER)
-        process = subprocess.Popen(
-            rendered, cwd=identity.working_directory, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-            env=sanitized_subprocess_environment(),
-        )
-        selector = selectors.DefaultSelector()
-        try:
-            if process.stdout is None or process.stderr is None:
+        deadline = time.monotonic() + _SERVICE_START_TIMEOUT_SECONDS
+        for _attempt in range(_SERVICE_START_ATTEMPTS):
+            if time.monotonic() >= deadline:
+                break
+            port = _private_loopback_port()
+            try:
+                rendered = expand_service_command_template(
+                    identity.command_template,
+                    port=port,
+                    release=identity.working_directory,
+                    repository=repository,
+                )
+            except ValueError:
                 raise RuntimeError(_PRIVATE_MARKER)
-            selector.register(process.stdout, selectors.EVENT_READ)
-            selector.register(process.stderr, selectors.EVENT_READ)
-            deadline = time.monotonic() + _SERVICE_START_TIMEOUT_SECONDS
-            output = bytearray()
-            while time.monotonic() < deadline:
-                for key, _event in selector.select(0.05):
-                    output.extend(os.read(key.fileobj.fileno(), 1024))
-                    if len(output) > _MAX_OUTPUT:
-                        raise RuntimeError(_PRIVATE_MARKER)
-                if process.poll() is not None:
+            process = subprocess.Popen(
+                rendered, cwd=identity.working_directory,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, start_new_session=True,
+                env=sanitized_subprocess_environment(),
+            )
+            selector = selectors.DefaultSelector()
+            candidate_exited = False
+            try:
+                if process.stdout is None or process.stderr is None:
                     raise RuntimeError(_PRIVATE_MARKER)
-                try:
-                    self._check_port(identity, port)
-                except (OSError, http.client.HTTPException):
-                    continue
-                self.process = process
-                self.port = port
-                self._identity = identity
-                return
-            raise RuntimeError(_PRIVATE_MARKER)
-        except BaseException:
-            _stop_group(process)
-            raise
-        finally:
-            selector.close()
-            if process.stdout is not None and self.process is not process:
-                process.stdout.close()
-            if process.stderr is not None and self.process is not process:
-                process.stderr.close()
+                selector.register(process.stdout, selectors.EVENT_READ)
+                selector.register(process.stderr, selectors.EVENT_READ)
+                output = bytearray()
+                while time.monotonic() < deadline:
+                    for key, _event in selector.select(0.05):
+                        output.extend(os.read(key.fileobj.fileno(), 1024))
+                        if len(output) > _MAX_OUTPUT:
+                            raise RuntimeError(_PRIVATE_MARKER)
+                    if process.poll() is not None:
+                        candidate_exited = True
+                        break
+                    try:
+                        self._check_port(identity, port)
+                    except (OSError, http.client.HTTPException):
+                        continue
+                    self.process = process
+                    self.port = port
+                    self._identity = identity
+                    return
+            finally:
+                selector.close()
+                if self.process is not process:
+                    _stop_group(process)
+                    if process.stdout is not None:
+                        process.stdout.close()
+                    if process.stderr is not None:
+                        process.stderr.close()
+            if not candidate_exited:
+                break
+        raise RuntimeError(_PRIVATE_MARKER)
 
     def check(self, identity: _CheckedService) -> None:
         if self.port is None or self._identity != identity:

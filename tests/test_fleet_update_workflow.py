@@ -2,6 +2,7 @@ import contextlib
 import json
 import io
 import os
+import socket
 import stat
 import tempfile
 import threading
@@ -346,6 +347,68 @@ class FleetUpdateWorkflowTests(unittest.TestCase):
                 service.close()
 
         self.assertIsNone(failure)
+
+    @acceptance
+    def test_disposable_service_retries_a_claimed_candidate_port(self):
+        import scripts.verify_fleet_update_workflow as verifier
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            program = root / "service.py"
+            program.write_text(
+                "import argparse\n"
+                "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+                "parser = argparse.ArgumentParser()\n"
+                "parser.add_argument('--port', type=int, required=True)\n"
+                "port = parser.parse_args().port\n"
+                "class Health(BaseHTTPRequestHandler):\n"
+                " def do_GET(self):\n"
+                "  self.send_response(204 if self.path == '/healthz' else 404)\n"
+                "  self.end_headers()\n"
+                " def log_message(self, *args): pass\n"
+                "ThreadingHTTPServer(('127.0.0.1', port), Health).serve_forever()\n",
+                encoding="utf-8",
+            )
+            occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            occupied.bind(("127.0.0.1", 0))
+            occupied_port = int(occupied.getsockname()[1])
+            retry_reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            retry_reservation.bind(("127.0.0.1", 0))
+            retry_port = int(retry_reservation.getsockname()[1])
+            ports = iter((occupied_port, retry_port))
+
+            def select_port():
+                port = next(ports)
+                if port == retry_port:
+                    retry_reservation.close()
+                return port
+
+            command = (
+                "/usr/bin/env", "python3", str(program), "--port", "{port}"
+            )
+            identity = verifier._CheckedService(
+                command,
+                verifier.expand_service_command_template(
+                    command,
+                    port=verifier._CHECK_PORT,
+                    release=root,
+                    repository=root,
+                ),
+                root,
+                "/healthz",
+                verifier._CHECK_PORT,
+            )
+            service = verifier._PrivateHttpService()
+            try:
+                with patch.object(
+                    verifier, "_private_loopback_port", side_effect=select_port
+                ):
+                    service.ensure_running(identity, root)
+                self.assertEqual(service.port, retry_port)
+            finally:
+                service.close()
+                occupied.close()
+                retry_reservation.close()
 
     @acceptance
     def test_failed_disposable_service_start_retains_no_candidate_state(self):
