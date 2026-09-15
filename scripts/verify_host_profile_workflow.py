@@ -26,13 +26,14 @@ from local_web_server.host_profile import (
     canonical_json_bytes,
 )
 from local_web_server.host_profile_backup import (
+    HostProfileBackup,
     MAX_BACKUP_BYTES,
     MAX_PROFILE_BYTES,
     MAX_REVISIONS,
     MAX_REVISION_BYTES,
     parse_host_backup,
 )
-from local_web_server.host_profile_store import HostProfileStore
+from local_web_server.host_profile_store import HostProfileSnapshot, HostProfileStore
 from local_web_server.install import Installer, load_main_manifests
 from local_web_server.render import render_caddyfile
 from scripts.disposable_workflow_support import sanitized_subprocess_environment
@@ -345,6 +346,17 @@ def _recover_state(
     return action, expected
 
 
+def _verify_backup_matches_snapshot(
+    document: HostProfileBackup, snapshot: HostProfileSnapshot
+) -> None:
+    if (
+        document.profile_bytes != snapshot.profile_bytes
+        or tuple(item.content for item in document.revisions)
+        != tuple(item.envelope_bytes for item in snapshot.revisions)
+    ):
+        raise HostProfileWorkflowError("recovery residue entered a backup")
+
+
 def run_workflow(root: Path, *, caddy: Path) -> WorkflowEvidence:
     """Run every host-profile acceptance step beneath one caller-owned root."""
 
@@ -511,12 +523,7 @@ def run_workflow(root: Path, *, caddy: Path) -> WorkflowEvidence:
         )
         final_backup = HostCommands(restored, clock=clock).backup().backup_path
         final_document = parse_host_backup(final_backup)
-        if (
-            final_document.profile_bytes != final_snapshot.profile_bytes
-            or tuple(item.content for item in final_document.revisions)
-            != tuple(item.envelope_bytes for item in final_snapshot.revisions)
-        ):
-            raise HostProfileWorkflowError("recovery residue entered a backup")
+        _verify_backup_matches_snapshot(final_document, final_snapshot)
 
         owned_paths = (
             app,

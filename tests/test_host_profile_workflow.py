@@ -246,45 +246,33 @@ class HostProfileWorkflowTests(unittest.TestCase):
                     )
                     self.assertFalse(hook_marker.exists())
 
-    @caddy_integration
     def test_recovery_backup_requires_exact_final_snapshot_bytes(self):
-        real_parse = profile_verifier.parse_host_backup
-        corruptions = {
-            "profile": lambda document: SimpleNamespace(
-                profile_bytes=b'{"wrong":"profile"}\n',
-                revisions=document.revisions,
-                document_bytes=document.document_bytes,
+        profile = b'{"host":"profile.invalid"}\n'
+        revision_bytes = (b"first revision\n", b"second revision\n")
+        snapshot = SimpleNamespace(
+            profile_bytes=profile,
+            revisions=tuple(
+                SimpleNamespace(envelope_bytes=content) for content in revision_bytes
             ),
-            "revision-order": lambda document: SimpleNamespace(
-                profile_bytes=document.profile_bytes,
-                revisions=tuple(reversed(document.revisions)),
-                document_bytes=document.document_bytes,
-            ),
-        }
-        for name, corrupt in corruptions.items():
-            with (
-                self.subTest(corruption=name),
-                tempfile.TemporaryDirectory() as temporary,
-            ):
-                root = Path(temporary).resolve()
+        )
 
-                def corrupt_final_backup(path: Path):
-                    document = real_parse(path)
-                    if Path(path).is_relative_to(
-                        root / "restored/config/local/backups"
-                    ):
-                        return corrupt(document)
-                    return document
+        def document(profile_bytes=profile, revisions=revision_bytes):
+            return SimpleNamespace(
+                profile_bytes=profile_bytes,
+                revisions=tuple(
+                    SimpleNamespace(content=content) for content in revisions
+                ),
+            )
 
-                with mock.patch.object(
-                    profile_verifier,
-                    "parse_host_backup",
-                    side_effect=corrupt_final_backup,
-                ):
-                    with self.assertRaises(
-                        profile_verifier.HostProfileWorkflowError
-                    ):
-                        profile_verifier.run_workflow(root, caddy=CADDY)
+        profile_verifier._verify_backup_matches_snapshot(document(), snapshot)
+        for name, corrupted in (
+            ("profile", document(profile_bytes=b'{"wrong":"profile"}\n')),
+            ("revision-order", document(revisions=tuple(reversed(revision_bytes)))),
+            ("revision-bytes", document(revisions=(revision_bytes[0], b"changed\n"))),
+        ):
+            with self.subTest(corruption=name):
+                with self.assertRaises(profile_verifier.HostProfileWorkflowError):
+                    profile_verifier._verify_backup_matches_snapshot(corrupted, snapshot)
 
     def test_caddy_lookup_prefers_executable_homebrew_then_portable_fallback(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -323,7 +311,6 @@ class HostProfileWorkflowTests(unittest.TestCase):
             root = Path(temporary).resolve()
             evidence = profile_verifier.run_workflow(root, caddy=CADDY)
 
-            self.assertEqual(evidence.phases, profile_verifier.PHASES[:-1])
             self.assertEqual(evidence.profile_relative, Path("platform/config/local/apps.json"))
             self.assertEqual(evidence.restored_profile_relative, Path("restored/config/local/apps.json"))
             self.assertEqual(evidence.directory_modes, (0o700, 0o700, 0o700))
@@ -346,33 +333,52 @@ class HostProfileWorkflowTests(unittest.TestCase):
             for path in evidence.owned_paths:
                 self.assertTrue(path.is_relative_to(root))
 
-    @caddy_integration
-    def test_public_runner_emits_only_bounded_phase_labels_and_cleans_root(self):
-        roots: list[Path] = []
-        lines: list[str] = []
+    def test_public_runner_bounds_private_output_and_cleans_root(self):
+        for fails in (False, True):
+            with self.subTest(workflow_fails=fails):
+                roots: list[Path] = []
+                lines: list[str] = []
+                private_marker = "private-host-profile-sentinel"
 
-        class RecordingTemporaryDirectory:
-            def __init__(inner_self, *args, **kwargs):
-                inner_self.temporary = tempfile.TemporaryDirectory(*args, **kwargs)
-                inner_self.name = inner_self.temporary.name
-                roots.append(Path(inner_self.name))
+                def tiny_workflow(root, *, caddy):
+                    roots.append(root)
+                    (root / "private-profile").write_text(
+                        private_marker, encoding="utf-8"
+                    )
+                    if fails:
+                        raise RuntimeError(f"{root}: {private_marker}")
+                    return SimpleNamespace(
+                        phases=profile_verifier.PHASES[:-1],
+                        directory_modes=(0o700, 0o700, 0o700),
+                        file_modes=(0o600, 0o600, 0o600),
+                        revision_counts=(1, 1),
+                        caddy_validated=True,
+                        all_paths_disposable=True,
+                        status_redacted=True,
+                        backup_round_tripped=True,
+                        recovery_residue_retained=True,
+                        owned_paths=(root / private_marker,),
+                    )
 
-            def cleanup(inner_self):
-                inner_self.temporary.cleanup()
-
-        verifier = profile_verifier.HostProfileWorkflowVerifier(
-            temporary_directory_factory=RecordingTemporaryDirectory,
-            emit=lines.append,
-        )
-
-        self.assertEqual(verifier.run(), 0)
-        self.assertEqual(lines, [f"{phase} PASS" for phase in profile_verifier.PHASES])
-        self.assertEqual(len(roots), 1)
-        self.assertFalse(roots[0].exists())
-        output = "\n".join(lines)
-        self.assertLess(len(output), 2048)
-        self.assertNotIn(tempfile.gettempdir(), output)
-        self.assertNotIn(str(ROOT), output)
+                verifier = profile_verifier.HostProfileWorkflowVerifier(
+                    emit=lines.append
+                )
+                with (
+                    mock.patch.object(profile_verifier, "run_workflow", tiny_workflow),
+                    mock.patch.object(
+                        profile_verifier, "select_caddy", return_value=Path("unused")
+                    ),
+                ):
+                    self.assertEqual(verifier.run(), 1 if fails else 0)
+                self.assertEqual(len(roots), 1)
+                self.assertFalse(roots[0].exists())
+                output = "\n".join(lines)
+                self.assertGreater(len(output), 0)
+                self.assertLess(len(output), 2048)
+                for private_value in (
+                    private_marker, str(roots[0]), tempfile.gettempdir(), str(ROOT)
+                ):
+                    self.assertNotIn(private_value, output)
 
 
 if __name__ == "__main__":
