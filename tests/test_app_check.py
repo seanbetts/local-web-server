@@ -295,72 +295,26 @@ class AppCheckerTests(unittest.TestCase):
 
         self.assert_release_refused(RecordingComposer(self.repository / "dist"), "index.html")
 
-    def test_release_refuses_duplicate_theme_links(self):
-        self.write_release_index(
-            Path("dist/index.html"),
-            '<link rel="stylesheet" href="/_local-web/platform/theme.css">'
-            '<link rel="stylesheet" href="/_local-web/platform/theme.css">',
-        )
 
-        self.assert_release_refused(RecordingComposer(self.repository / "dist"), "theme.css")
 
-    def test_release_refuses_duplicate_case_insensitive_href_attributes(self):
-        cases = (
-            (
-                "first-valid",
-                '<link rel="stylesheet" HREF="/_local-web/platform/theme.css" '
-                'href="/not-theme.css">',
-            ),
-            (
-                "last-valid",
-                '<link rel="stylesheet" href="/not-theme.css" '
-                'HREF="/_local-web/platform/theme.css">',
-            ),
-        )
 
-        for order, content in cases:
-            with self.subTest(order=order):
-                self.write_release_index(Path("dist/index.html"), content)
-                self.assert_release_refused(
-                    RecordingComposer(self.repository / "dist"), "not-theme"
-                )
 
-    def test_release_refuses_duplicate_case_insensitive_rel_attributes(self):
-        cases = (
-            (
-                "first-valid",
-                '<link REL="stylesheet" rel="alternate" '
-                'href="/_local-web/platform/theme.css">',
-            ),
-            (
-                "last-valid",
-                '<link rel="alternate" REL="stylesheet" '
-                'href="/_local-web/platform/theme.css">',
-            ),
-        )
 
-        for order, content in cases:
-            with self.subTest(order=order):
-                self.write_release_index(Path("dist/index.html"), content)
-                self.assert_release_refused(
-                    RecordingComposer(self.repository / "dist"), "alternate"
-                )
-
-    def test_release_refuses_a_theme_looking_string_without_a_stylesheet_link(self):
-        self.write_release_index(
-            Path("dist/index.html"),
+    def test_release_requires_one_unambiguous_theme_stylesheet(self):
+        theme = '<link rel="stylesheet" href="/_local-web/platform/theme.css">'
+        invalid = (
+            theme + theme,
+            '<link rel="stylesheet" HREF="/_local-web/platform/theme.css" href="/other.css">',
+            '<link rel="stylesheet" href="/other.css" HREF="/_local-web/platform/theme.css">',
+            '<link REL="stylesheet" rel="alternate" href="/_local-web/platform/theme.css">',
+            '<link rel="alternate" REL="stylesheet" href="/_local-web/platform/theme.css">',
             '<script>"/_local-web/platform/theme.css"</script>',
+            '<link rel="stylesheet" href="/_local-web/platform/other.css">',
         )
-
-        self.assert_release_refused(RecordingComposer(self.repository / "dist"), "theme.css")
-
-    def test_release_refuses_the_wrong_theme_route(self):
-        self.write_release_index(
-            Path("dist/index.html"),
-            '<link rel="stylesheet" href="/_local-web/platform/not-theme.css">',
-        )
-
-        self.assert_release_refused(RecordingComposer(self.repository / "dist"), "not-theme")
+        for content in invalid:
+            with self.subTest(content=content):
+                self.write_release_index(Path("dist/index.html"), content)
+                self.assert_release_refused(RecordingComposer(self.repository / "dist"), "theme.css")
 
     def test_release_refuses_an_oversized_entry(self):
         entry = self.repository / "dist/index.html"

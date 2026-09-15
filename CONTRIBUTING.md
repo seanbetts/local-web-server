@@ -28,11 +28,11 @@ For routine changes, run the focused tests for the code you changed, then:
 PYTHONWARNINGS=error::ResourceWarning npm run check
 ```
 
-This runs the fast Python group and the frontend type, consumer, unit, and
-build checks. The Python runner prints selected and excluded counts and the
-slowest tests. Its temporary directory is private to the invocation.
+This runs focused Python validation/state tests and the frontend type, consumer,
+unit, and build checks. Python uses standard unittest duration reporting and a
+private temporary directory with short paths for macOS Unix sockets.
 
-Before merging framework changes, run all automated test suites:
+Before merging framework changes, run the retained required surface:
 
 ```sh
 LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run check:all
@@ -43,13 +43,13 @@ npm audit --omit=dev
 git diff --check
 ```
 
-`check:all` includes every Python test and the real browser suites. It does
-not invoke every standalone disposable workflow listed below. It builds
-the shared UI once for the frontend checks. Caddy must be installed when
-`LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1` is set. The public CI also runs the
-disposable host-profile workflow separately.
+`check:all` runs both Python groups, including real Caddy and disposable
+migration/recovery journeys, then builds the shared UI once and runs frontend
+checks and Chromium journeys. Those journeys cover homepage navigation/status,
+native shell interaction, context downloads, and interactive exports opened
+offline. Four gallery snapshots remain part of the theme-release contract.
 
-The groups can be selected or inspected independently:
+Useful focused entrypoints:
 
 ```sh
 npm run test:python
@@ -60,36 +60,36 @@ npm run check:frontend
 npm run check:frontend:browser
 ```
 
-Fast and acceptance are disjoint groups whose union is the complete Python
-suite. Tests marked with `@acceptance` retain real package builds, disposable
-workflow execution, process cleanup checks, and the full-size profile restore. Ordinary unittest discovery
-still runs everything, including acceptance:
+The default Python group contains focused component checks, including small Git
+fixtures where committed-source authority is the behavior under test.
+`@acceptance` selects real toolchain, Caddy, and process lifecycle integration.
+Their union is `all`. The separately invoked `npm run test:python:stress` checks
+the published 10,000-revision/5 MiB profile restore scale. Small chains and exact
+limit rejection stay in routine coverage. Ordinary discovery also runs stress:
 
 ```sh
 PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v
 ```
 
-Standalone commands such as `check:index`, `check:ui:consumer`, and
-`test:index:e2e` prepare their own prerequisites. Commands ending in
-`:prepared` are internal composition steps and require the preceding builds.
+Standalone commands prepare their prerequisites. Commands ending in `:prepared`
+are composition steps and require the preceding builds.
 
-| Change | Focused coverage |
+| Guarantee | Primary test owner; integration above it |
 | --- | --- |
-| Python policy, file preservation, profiles, or recovery | Relevant `python3 -m unittest tests.test_<module> -v`; then the full Python group for framework integration |
-| Workflow phases, failure labels, or ordering | Lightweight workflow matrices; retain real acceptance for distinct resource and recovery states |
-| UI package contents or generation | Package/generator unit tests plus their marked real-build acceptance |
-| Shared UI behavior | `npm run test:ui -- --run` and `npm run check:ui:consumer` |
-| Native dialog focus or keyboard behavior | `npm run test:gallery:e2e` |
-| System Index layout or persistence | `npm run check:index` and `npm run test:index:e2e` |
-| Export payload decoding | `npm run test:interactive-export` |
-| Download, offline export, or CSP behavior | `npm run test:interactive-export:e2e` |
+| Invalid manifests, unsafe routes, CSP policy | `test_config`, `test_render`; real Caddy routing |
+| Failed builds, deployment/rollback and application-data preservation | `test_git_build`, `test_deploy`; representative migration/fleet recovery |
+| Profile integrity, exclusive publication and interrupted recovery | `test_host_profile_store`, `test_host_profile_backup`, `test_host_profile_restore`, `test_host_profile_recovery`; host-profile round trip |
+| Secret exclusion and public-release privacy | `test_public_release`; committed-tree release verifier |
+| Bounded execution and cleanup | `test_process_runner`, `test_git_runner`; small migration fixture process tests |
+| Generated app/package contract | `test_app_template`, `test_ui_package`; one real generated-app check and reproducible package build |
+| Probe policy and UI state | `statusController.test.ts`, shared component tests; Index navigation/status journey |
+| Context/export schema, compatibility, size limits | export model/document tests; actual download and offline-browser journeys |
 
-Keep assertions at the cheapest layer that can prove the behavior. Use unit
-matrices for policy combinations and browser tests for native browser behavior.
-Retain representative real toolchain and recovery tests; do not multiply a full
-build across cases that differ only in a mocked phase or error label. Add a test
-when it protects an observable contract or regression, rather than pinning
-incidental prose or implementation spelling.
+Keep each policy at the cheapest layer that proves it. Above that owner, retain
+representative integration rather than repeating every invalid value, injected
+phase, or build failure. Do not freeze prose, implementation spelling, progress
+messages, dependency versions, or CI job layout in tests. CI permission and
+private-state boundaries remain checked.
 
 ## Disposable framework workflows
 
@@ -130,27 +130,20 @@ available, while keeping all configuration and runtime paths disposable.
 
 ## Public CI
 
-The public workflow runs for pull requests and explicit manual dispatches. It
-has only `contents: read` permission, does not retain checkout credentials, and
-does not consume repository secrets or run on push or deployment events.
+Pull requests run Python 3.14 on macOS 15 and Node 24 frontend checks on Ubuntu
+24.04. Python includes real Caddy and disposable profile/migration integration;
+the frontend job installs Chromium and runs the critical browser journeys.
+Both use locked dependencies installed without lifecycle scripts. The packed UI
+consumer check installs the local tarball with an empty offline cache.
 
-macOS 15 runs the complete Python 3.14 suite through the repository's suite
-runner because the framework's filesystem and lifecycle contracts use macOS
-primitives. The runner owns a short temporary path for Unix sockets and prints
-per-test timing without changing the test set. The job installs the locked Node
-dependencies without lifecycle scripts, Chromium, and Caddy 2 before running
-the suite and the disposable host-profile workflow. Its private profile,
-revision, backup, rendered Caddy configuration, and runtime fixtures remain
-beneath disposable workflow paths. It never invokes platform
-installation, LaunchAgent or Tailscale changes, application activation,
-deployment, or a real `config/local/apps.json`.
+Node 22 and 26 remain supported by `package.json`. Select **compatibility** on a
+manual workflow dispatch to run frontend and browser checks on those majors.
+They are not repeated for every pull request.
 
-Ubuntu 24.04 runs the static, shared-UI, System Index, gallery, public-release,
-and dependency-audit checks on each supported Node.js major: 22, 24, and 26.
-npm's download cache is keyed by the committed lockfile; dependencies are
-installed with lifecycle scripts disabled. The packed shared-UI consumer check
-uses a new empty cache and installs only the local package tarball in offline
-mode, so it cannot rely on packages fetched by an earlier CI step.
+The workflow has only `contents: read` permission, retains no checkout
+credentials, and consumes no repository secrets. It never installs the platform,
+changes LaunchAgents or Tailscale, activates applications, deploys, or reads a
+real host profile. All host and runtime fixtures remain disposable.
 
 ## Change discipline
 

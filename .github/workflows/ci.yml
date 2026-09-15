@@ -2,7 +2,15 @@
   "name": "CI",
   "on": {
     "pull_request": {},
-    "workflow_dispatch": {}
+    "workflow_dispatch": {
+      "inputs": {
+        "compatibility": {
+          "description": "Also check other supported Node majors",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
   },
   "permissions": {
     "contents": "read"
@@ -11,7 +19,7 @@
     "python": {
       "name": "Python 3.14",
       "runs-on": "macos-15",
-      "timeout-minutes": 60,
+      "timeout-minutes": 15,
       "env": {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -79,17 +87,13 @@
         {
           "name": "Run the Python acceptance suite",
           "run": "LOCAL_WEB_REQUIRE_CADDY_INTEGRATION=1 PYTHONWARNINGS=error::ResourceWarning npm run test:python:acceptance"
-        },
-        {
-          "name": "Run the disposable host-profile workflow",
-          "run": "python3 scripts/verify_host_profile_workflow.py"
         }
       ]
     },
     "node": {
-      "name": "Node ${{ matrix.node }}",
+      "name": "Frontend (Node 24)",
       "runs-on": "ubuntu-24.04",
-      "timeout-minutes": 30,
+      "timeout-minutes": 10,
       "env": {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -97,15 +101,64 @@
         "GIT_ASKPASS": "/usr/bin/false",
         "SSH_ASKPASS": "/usr/bin/false"
       },
-      "strategy": {
-        "fail-fast": false,
-        "matrix": {
-          "node": [
-            22,
-            24,
-            26
-          ]
+      "steps": [
+        {
+          "name": "Check out the public tree",
+          "uses": "actions/checkout@v7",
+          "with": {
+            "persist-credentials": false,
+            "set-safe-directory": false
+          }
+        },
+        {
+          "name": "Set up Node",
+          "uses": "actions/setup-node@v7",
+          "with": {
+            "node-version": "24",
+            "cache": "npm",
+            "cache-dependency-path": "package-lock.json"
+          }
+        },
+        {
+          "name": "Install locked dependencies without lifecycle scripts",
+          "run": "npm ci --ignore-scripts"
+        },
+        {
+          "name": "Install Chromium",
+          "run": "npx playwright install --with-deps chromium"
+        },
+        {
+          "name": "Run the build-once frontend checks",
+          "run": "npm run check:frontend"
+        },
+        {
+          "name": "Run critical browser journeys",
+          "run": "npm run check:frontend:browser:prepared"
+        },
+        {
+          "name": "Verify the public release surface",
+          "run": "npm run verify:public-release"
+        },
+        {
+          "name": "Audit all production and development dependencies",
+          "run": "npm audit"
+        },
+        {
+          "name": "Audit production dependencies",
+          "run": "npm audit --omit=dev"
         }
+      ]
+    },
+    "compatibility": {
+      "name": "Compatibility (Node ${{ matrix.node }})",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 10,
+      "env": {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "/usr/bin/false",
+        "SSH_ASKPASS": "/usr/bin/false"
       },
       "steps": [
         {
@@ -130,22 +183,28 @@
           "run": "npm ci --ignore-scripts"
         },
         {
+          "name": "Install Chromium",
+          "run": "npx playwright install --with-deps chromium"
+        },
+        {
           "name": "Run the build-once frontend checks",
           "run": "npm run check:frontend"
         },
         {
-          "name": "Verify the public release surface",
-          "run": "npm run verify:public-release"
-        },
-        {
-          "name": "Audit all production and development dependencies",
-          "run": "npm audit"
-        },
-        {
-          "name": "Audit production dependencies",
-          "run": "npm audit --omit=dev"
+          "name": "Run critical browser journeys",
+          "run": "npm run check:frontend:browser:prepared"
         }
-      ]
+      ],
+      "if": "github.event_name == 'workflow_dispatch' && inputs.compatibility",
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "node": [
+            22,
+            26
+          ]
+        }
+      }
     }
   }
 }

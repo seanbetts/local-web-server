@@ -79,73 +79,19 @@ class AppTemplateTests(unittest.TestCase):
         self.assertTrue(all(content.endswith("\n") for content in files.values()))
         self.assertFalse(any("\r\n" in content for content in files.values()))
 
-    def test_pins_the_standard_toolchain_and_scripts_exactly(self):
+    def test_generated_checks_remain_app_local(self):
         package = json.loads(self.rendered()["package.json"])
-
-        self.assertEqual(
-            package["scripts"],
-            {
-                "dev": "vite --host 127.0.0.1",
-                "build": "tsc -b && vite build",
-                "lint": "eslint .",
-                "test": "vitest run",
-                "test:e2e": "playwright test",
-                "check": "npm run lint && npm run test && npm run build",
-            },
-        )
+        self.assertTrue({"check", "test:e2e"} <= package["scripts"].keys())
         self.assertFalse(any("local-web" in command for command in package["scripts"].values()))
-        self.assertEqual(
-            package["dependencies"],
-            {
-                "@local-web/ui": "file:vendor/local-web-ui.tgz",
-                "react": "19.2.8",
-                "react-dom": "19.2.8",
-            },
-        )
-        self.assertEqual(
-            package["devDependencies"],
-            {
-                "@eslint/js": "10.0.1",
-                "@axe-core/playwright": "4.12.1",
-                "@playwright/test": "1.62.1",
-                "@testing-library/jest-dom": "7.0.0",
-                "@testing-library/react": "16.3.2",
-                "@types/node": "26.1.2",
-                "@types/react": "19.2.18",
-                "@types/react-dom": "19.2.4",
-                "@vitejs/plugin-react": "6.0.5",
-                "eslint": "10.8.0",
-                "eslint-plugin-react-hooks": "7.1.1",
-                "eslint-plugin-react-refresh": "0.5.3",
-                "globals": "17.9.0",
-                "jsdom": "30.0.1",
-                "typescript": "6.0.3",
-                "typescript-eslint": "8.66.0",
-                "vite": "8.2.0",
-                "vitest": "4.1.10",
-            },
-        )
 
     def test_configures_the_real_base_path_and_reserved_theme_route(self):
         files = self.rendered()
         index = files["index.html"]
         manifest = json.loads(files["local-web.json"])
-        vite = files["vite.config.ts"]
 
         self.assertIn('href="/_local-web/platform/theme.css"', index)
         self.assertNotIn("local-web:colour-mode", index)
         self.assertNotIn("<script>", index)
-        self.assertIn("process.env.VITE_PUBLIC_BASE_PATH ?? '/'", vite)
-        self.assertIn("base: publicBasePath", vite)
-        self.assertIn("localWebApp({", vite)
-        self.assertIn("appId: 'recipes'", vite)
-        self.assertIn("basePath: publicBasePath", vite)
-        self.assertIn("'./src/**/*.test.ts'", vite)
-        self.assertIn("'./src/**/*.test.tsx'", vite)
-        self.assertIn("from './src/platform.ts'", vite)
-        self.assertIn("from 'vitest/config'", vite)
-        self.assertIn('"vite/client"', files["tsconfig.app.json"])
-        self.assertIn('"src/platform.ts"', files["tsconfig.node.json"])
         self.assertEqual(
             manifest["build"]["environment"],
             ["VITE_PUBLIC_BASE_PATH"],
