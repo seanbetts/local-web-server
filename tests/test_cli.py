@@ -61,6 +61,7 @@ _REGISTRY_BACKED_COMMANDS = (
     ["theme", "rollback"],
     ["status"],
     ["app", "identity"],
+    ["app", "data-target", "--repository", "/tmp/fixture"],
     ["app", "check", "--repository", "/tmp/fixture"],
     ["app", "register", "--repository", "/tmp/fixture", "--dry-run"],
     ["app", "register", "--repository", "/tmp/fixture", "--apply"],

@@ -214,3 +214,19 @@ helper or app source file is unavailable. Linux dependency preparation also sees
 its declared Dockerfile. Changes to any declared input invalidate the cache;
 ordinary app source changes do not. Do not broaden the list to runtime state or
 credentials to make an installer succeed.
+
+## Production data clients
+
+App-owned Mac clients resolve their registered production authority through:
+
+```sh
+local-web app data-target --repository /path/to/registered/app
+```
+
+The JSON contains `schemaVersion`, `appId`, `targetKind`, the full app `baseUrl`
+and `profileRevision`. It contains no state paths or secret values and makes no
+availability claim. The repository must match the registered canonical checkout.
+A missing/corrupt profile, missing registration or failed API request is an error;
+clients must never substitute a local production file. Explicit isolated fixture
+stores remain available for Mac development after production moves to the NAS.
+Legacy Mac trusted-LAN targets retain HTTP; NAS targets require HTTPS.

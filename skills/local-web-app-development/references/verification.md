@@ -169,3 +169,7 @@ another-device observation and restart acceptance. Source tests, generated
 Compose or a parsed Docker archive do not establish those live facts. Update the
 installed skill only through its normal installer after the integrated workflow
 is verified; editing these source references does not install it.
+
+Use `local-web app doctor --target nas-docker --repository .` for explicit NAS
+source eligibility. This reports recipe/input readiness, independently of the
+currently installed host target, and does not claim Linux startup or live health.

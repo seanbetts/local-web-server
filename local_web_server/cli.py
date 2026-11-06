@@ -27,6 +27,7 @@ from .app_update import AppUpdateError, AppUpdater
 from .app_update_models import AppUpdatePlan, AppUpdateRequest
 from .config import ConfigError, load_registry, load_registry_bytes
 from .deploy import DeploymentManager, HealthCheckFailed, RollbackUnavailable
+from .data_target import data_target_for_repository
 from .fleet_update import FleetUpdater
 from .fleet_update_models import FleetAppPlan, FleetAppResult
 from .git_build import BuildFailed, BuildOutputInvalid
@@ -69,7 +70,7 @@ _HOST_PROFILE_LIMITS = {
 }
 
 
-def _load_default_host_profile() -> tuple[Path, HostRegistry]:
+def _load_default_host_profile_snapshot():
     profile = resolve_host_profile(_PLATFORM_REPOSITORY)
     try:
         paths = HostProfilePaths.for_repository(
@@ -83,6 +84,11 @@ def _load_default_host_profile() -> tuple[Path, HostRegistry]:
         registry = load_registry_bytes(snapshot.profile_bytes)
     except (ConfigError, HostProfileStoreError, UnicodeError) as error:
         raise HostProfileError(_INVALID_PRIVATE_PROFILE) from error
+    return profile, registry, snapshot
+
+
+def _load_default_host_profile() -> tuple[Path, HostRegistry]:
+    profile, registry, _snapshot = _load_default_host_profile_snapshot()
     return profile, registry
 
 
@@ -127,6 +133,9 @@ def build_parser(*, _bounded_errors: bool = False) -> argparse.ArgumentParser:
     doctor = app_commands.add_parser("doctor")
     doctor.add_argument("--repository", type=Path, default=Path("."))
     doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--target", choices=('macos', 'nas-docker'), default='macos')
+    data_target = app_commands.add_parser('data-target')
+    data_target.add_argument('--repository', type=Path, default=Path('.'))
     check = app_commands.add_parser("check")
     check.add_argument("--repository", type=Path, default=Path("."))
     update = app_commands.add_parser("update")
@@ -299,8 +308,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else:
                     _print_public_base_path_migration_plan(plan)
                 return 0
+            if args.app_command == 'data-target':
+                _path, registry, snapshot = _load_default_host_profile_snapshot()
+                print(json.dumps(data_target_for_repository(registry, snapshot, args.repository),
+                                 sort_keys=True, separators=(',', ':')))
+                return 0
             if args.app_command == "doctor":
-                report = AppDoctor().inspect(args.repository)
+                doctor = AppDoctor() if args.target == 'macos' else AppDoctor(target_kind=args.target)
+                report = doctor.inspect(args.repository)
                 if args.json:
                     print(report.as_json())
                 elif report.diagnostics:
