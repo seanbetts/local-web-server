@@ -58,6 +58,7 @@ class GitRepository:
         ).stdout.splitlines()
         for variable in local_variables:
             environment.pop(variable, None)
+        environment['GIT_NO_REPLACE_OBJECTS'] = '1'
         self._environment = environment
 
     def _run(self, *arguments: str, **kwargs):

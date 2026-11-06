@@ -15,3 +15,11 @@ Use `$local-web-app-development` for creation, development, diagnostics, verific
 - Never commit secrets or private environment values. Keep local values in ignored `.env` files.
 - Before completion run `"$LOCAL_WEB" app doctor --repository .`, `npm run check`, `npm run test:e2e`, and `"$LOCAL_WEB" app check --repository .`.
 - `npm run check` must remain app-local. Platform orchestration belongs to `"$LOCAL_WEB" app check --repository .`.
+
+- Preserve the app-owned `production` declaration when present. Its explicit
+  native build commands and dependency cache are separate from Linux runtime
+  dependencies. A generated service needs a reviewed recipe and committed inputs
+  before NAS publication; Mac compatibility alone is insufficient.
+- Use only the selected target's supported lifecycle. A failed NAS operation
+  must remain visible; never publish to the Mac as an implicit fallback. Source
+  checks do not authorize data migration, origin handoff or live installation.

@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .icons import canonical_manifest_icon
+from .nas_recipe import ProductionRecipe, production_declaration, parse_production_recipe
+from .native_build import NativeDependencyRecipe
+from .process_runner import ProcessCommand
 
 
 _TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "templates" / "react-app"
@@ -37,6 +40,7 @@ _ALLOWED_MARKERS = frozenset(
         "__CHECK_SCRIPT__",
         "__APP_ARCHITECTURE__",
         "__SERVICE_DEVELOPMENT__",
+        "__PRODUCTION_MANIFEST__",
     }
 )
 
@@ -56,6 +60,7 @@ class TemplateInputs:
     ui_sha256: str
     capabilities: tuple[str, ...]
     kind: str = "static"
+    production_recipe: ProductionRecipe | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +111,13 @@ def _validate(inputs: TemplateInputs) -> None:
         raise TemplateError("ui_sha256 is invalid")
     if inputs.kind not in {"static", "service"}:
         raise TemplateError("kind is invalid")
+    if inputs.production_recipe is not None:
+        try:
+            if type(inputs.production_recipe) is not ProductionRecipe:
+                raise ValueError
+            inputs.production_recipe.validate_kind(inputs.kind)
+        except ValueError as error:
+            raise TemplateError("production recipe is invalid for the app kind") from error
     if (
         inputs.capabilities != tuple(sorted(inputs.capabilities))
         or len(inputs.capabilities) != len(set(inputs.capabilities))
@@ -128,7 +140,18 @@ def render_template(inputs: TemplateInputs) -> tuple[RenderedFile, ...]:
         raise TemplateError("inputs must be TemplateInputs")
     _validate(inputs)
     service = inputs.kind == "service"
+    production = inputs.production_recipe
+    if production is None and not service:
+        production = parse_production_recipe(production_declaration('static',
+            build_commands=(ProcessCommand('native frontend', ('npm', 'run', 'build')),),
+            native_dependencies=NativeDependencyRecipe(
+                ('package-lock.json', 'package.json', 'vendor/local-web-ui.tgz'),
+                (ProcessCommand('native frontend dependencies', ('npm', 'ci')),), ('node_modules',))), kind='static')
     replacements = {
+        "__PRODUCTION_MANIFEST__": (
+            '  "production": ' + json.dumps(production.to_dict(), indent=2).replace('\n', '\n  ') + ',\n'
+            if production is not None else ''
+        ),
         "__APP_ID__": inputs.app_id,
         "__APP_TITLE__": inputs.title,
         "__APP_ROUTE__": inputs.route,
@@ -174,7 +197,7 @@ def render_template(inputs: TemplateInputs) -> tuple[RenderedFile, ...]:
             else "a static React, TypeScript, and Vite client"
         ),
         "__SERVICE_DEVELOPMENT__": (
-            "The reference backend lives in `server/`, binds only to loopback, and is assembled with the frontend by the platform's declarative release contract.\n"
+            "The reference backend lives in `server/`, defaults to loopback, accepts an explicit `--bind-host` for an isolated container, and is assembled with the frontend by the platform's declarative release contract.\n"
             if service
             else ""
         ),

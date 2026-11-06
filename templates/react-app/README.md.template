@@ -38,3 +38,24 @@ npm run test:e2e
 ```
 
 `npm run check` is entirely app-local: it runs lint, unit tests, and the production build. `"$LOCAL_WEB" app check --repository .` runs the structural doctor first, then orchestrates the app-local checks and browser tests.
+
+## Production targets
+
+The app owns its committed `local-web.json` production contract. Generated static
+apps declare a `none` data contract, a native frontend build and a separate locked
+npm dependency cache. Commit `package-lock.json`, `package.json` and the vendored
+UI package before preparing a NAS release. Ordinary source changes reuse the
+native dependency artifact; frontend compilation runs on the Mac's native
+platform.
+
+A generated service remains eligible for the Mac target without a NAS recipe.
+NAS preparation requires a supplied app-owned production recipe, pinned Linux
+base image, explicit ABI, Dockerfile and dependency inputs, container argv,
+resource ceilings and data compatibility policy. A declaration alone does not
+supply those files or prove runtime health. Keep credentials in selected private
+secret files and durable records under the configured state binding.
+
+NAS deployment, data migration and hostname cutover have separate acceptance
+and approval gates. Source checks do not establish that the NAS is active or
+that the app works with the Mac switched off. Follow the platform's maintained
+NAS operations guide; never fall back to publishing locally after a NAS error.

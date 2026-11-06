@@ -15,7 +15,7 @@
     ]__BUILD_RELEASE__
   },
   "healthPath": "__HEALTH_PATH__"__SERVICE_MANIFEST__,
-  "home": {
+__PRODUCTION_MANIFEST__  "home": {
     "icon": "__APP_ICON__",
     "accent": "__APP_ACCENT__"
   },

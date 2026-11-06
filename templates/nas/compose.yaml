@@ -1,0 +1,38 @@
+{
+  "name": "local-web",
+  "services": {
+    "tailscale": {
+      "platform": "linux/amd64",
+      "restart": "unless-stopped",
+      "read_only": true,
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "environment": {
+        "TS_USERSPACE": "true",
+        "TS_STATE_DIR": "/var/lib/tailscale",
+        "TS_SERVE_CONFIG": "/etc/local-web/serve.json",
+        "TS_AUTH_ONCE": "true"
+      },
+      "tmpfs": ["/tmp", "/var/run"],
+      "cpus": 0.5,
+      "mem_limit": "256m"
+    },
+    "caddy": {
+      "platform": "linux/amd64",
+      "restart": "unless-stopped",
+      "network_mode": "service:tailscale",
+      "depends_on": ["tailscale"],
+      "read_only": true,
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "entrypoint": ["caddy"],
+      "command": ["run", "--config", "/etc/local-web/Caddyfile", "--adapter", "caddyfile"],
+      "tmpfs": ["/tmp", "/config", "/data"],
+      "cpus": 0.5,
+      "mem_limit": "256m"
+    }
+  },
+  "networks": {
+    "local-web": {"driver": "bridge"}
+  }
+}

@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from local_web_server.app_template import TemplateError, TemplateInputs, render_template
+from local_web_server.config import parse_manifest
+from local_web_server.nas_recipe import parse_production_recipe
 
 
 EXPECTED_PATHS = {
@@ -78,6 +80,46 @@ class AppTemplateTests(unittest.TestCase):
         self.assertNotRegex("".join(files.values()), r"__[A-Z0-9_]+__")
         self.assertTrue(all(content.endswith("\n") for content in files.values()))
         self.assertFalse(any("\r\n" in content for content in files.values()))
+
+    def test_static_nas_recipe_separates_native_dependencies_from_source_build(self):
+        manifest = parse_manifest(self.rendered()['local-web.json'])
+        self.assertEqual(manifest.production.data_contract, 'none')
+        self.assertEqual(manifest.production.rollback_policy, 'compatible')
+        self.assertIsNone(manifest.production.runtime)
+        self.assertEqual([command.argv for command in manifest.production.build_commands], [('npm', 'run', 'build')])
+        self.assertEqual([command.argv for command in manifest.production.native_dependencies.install_commands], [('npm', 'ci')])
+        self.assertIn('package-lock.json', manifest.production.native_dependencies.lockfiles)
+        self.assertIn('vendor/local-web-ui.tgz', manifest.production.native_dependencies.lockfiles)
+        self.assertEqual(manifest.production.native_dependencies.outputs, ('node_modules',))
+
+    def test_service_requires_explicit_app_owned_production_contract(self):
+        self.assertIsNone(parse_manifest(self.rendered(kind='service')['local-web.json']).production)
+        value = dict(recipeVersion='1', dataContract='none', rollbackPolicy='compatible',
+                     buildCommands=[['npm', 'run', 'build']], nativeDependencies=None,
+                     runtime=dict(baseImage='node@sha256:' + 'a' * 64, abi='node-24-linux-amd64', healthRuntime='node',
+                         lockfiles=['package-lock.json'], dockerfile='Dockerfile.runtime',
+                         command=['node', 'server/service.mjs', '--port', '{port}', '--bind-host', '{bindHost}'],
+                         cpuLimit=1, memoryLimitMib=512, secretFiles=[]))
+        recipe = parse_production_recipe(value, kind='service')
+        manifest = parse_manifest(self.rendered(kind='service', production_recipe=recipe)['local-web.json'])
+        self.assertEqual(manifest.production, recipe)
+        with self.assertRaises(TemplateError):
+            self.rendered(kind='static', production_recipe=recipe)
+
+    def test_service_listener_defaults_to_loopback_and_accepts_explicit_container_bind(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'service.mjs'
+            path.write_text(self.rendered(kind='service')['server/service.mjs'])
+            for argument, expected in ((None, '127.0.0.1'), ('0.0.0.0', '0.0.0.0')):
+                argv = ['node', str(path), '--port', '12345']
+                if argument is not None:
+                    argv += ['--bind-host', argument]
+                script = ("import { Server } from 'node:http'; "
+                          "Server.prototype.listen = function(port, host) { console.log(JSON.stringify({port,host})); return this; }; "
+                          "process.argv = " + json.dumps(argv) + "; await import(" + json.dumps(path.as_uri()) + ");")
+                result = subprocess.run(('node', '--input-type=module', '-e', script), check=True,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(json.loads(result.stdout), dict(port=12345, host=expected))
 
     def test_generated_checks_remain_app_local(self):
         package = json.loads(self.rendered()["package.json"])

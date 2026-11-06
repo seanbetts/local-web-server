@@ -30,6 +30,7 @@ _INSTALLATION_SOURCES = (
     "examples/ui-gallery",
     "packages/ui",
     "platform_assets",
+    "templates/nas",
     "skills/local-web-app-development",
     "local_web_server",
     "scripts",

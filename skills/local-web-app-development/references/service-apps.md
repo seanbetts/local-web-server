@@ -22,7 +22,7 @@ A supported service manifest declares:
 - explicit non-secret build environment names; and
 - either a complete build output or exact `build.release` source-to-target entries.
 
-The service must bind `127.0.0.1`, accept the registered port, and keep secrets out of the manifest and release. `build.release` is the ordinary platform-owned composer: list exact frontend, service-code, and immutable-data paths instead of building another app-specific packaging framework. Manifests without it retain their existing complete-output contract.
+On the Mac target, the service must bind `127.0.0.1`, accept the registered port, and keep secrets out of the manifest and release. `build.release` is the ordinary platform-owned composer: list exact frontend, service-code, and immutable-data paths instead of building another app-specific packaging framework. Manifests without it retain their existing complete-output contract.
 
 Keep language setup, dependency locks, lint, type checks, unit tests, and service tests app-local. Extended `npm run check` scripts are valid, but they must not invoke `local-web`.
 
@@ -219,3 +219,30 @@ To convert an already registered static app, commit the service manifest, run
 `"$LOCAL_WEB" app activate --repository .` for the read-only preview, and then
 run `"$LOCAL_WEB" app activate --repository . --apply`. Do not hand-edit the
 registry to perform the conversion.
+
+
+## NAS service recipe and readiness
+
+NAS hosting uses a separate committed `production.runtime` recipe. Supply the
+app's pinned Linux/amd64 base image, ABI, dependency lock/input paths, Dockerfile,
+direct container argv, CPU/memory ceilings and selected secret filenames. Set
+`healthRuntime` explicitly to `node` or `python3` for the installed runtime used
+by the fixed internal health probe; image names and start commands are never
+parsed to infer it.
+Native frontend dependencies and build commands remain separate. The platform
+must not reuse the Mac service command or ship a macOS virtual environment.
+
+The generated Node reference defaults to loopback and accepts an explicit
+`--bind-host`; a reviewed container command can pass `{bindHost}`. The app must
+also preserve strict same-origin checks and trust forwarded headers only from
+the configured proxy. Bind code at `/app/current`, durable state at `/state` and
+only selected private files at `/run/secrets`. A container recipe must never
+substitute `{repository}` or mount the development checkout.
+
+A service generated without a supplied recipe remains a Mac foundation. Add the
+actual app-owned recipe files and run NAS-target structural checks before NAS
+preparation. Structural success does not verify Linux startup, API parity,
+rendered behavior, backups, data migration or the live hostname handoff. Those
+remain separate checks in the NAS migration plan. A `migration-required` release
+must use a reviewed app migration procedure; ordinary hooks/fleet deployment must
+refuse it, and code rollback must not cross data contracts or restore old data.

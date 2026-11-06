@@ -146,3 +146,26 @@ gate.
 ## Rendered acceptance
 
 Automated accessibility and no-overflow checks are necessary but not sufficient. Inspect desktop, 390 px, and 320 px layouts in light and dark modes. Preserve the approved information hierarchy; avoid duplicate app mastheads; keep tap targets comfortable; progressively disclose dense supporting data; check chart labels for clipping and tables for bounded internal scrolling. When an approved concept exists, compare the rendered result directly with it before claiming completion.
+
+
+## NAS verification boundary
+
+Verify the configured target explicitly. Mac structural compatibility and
+loopback health do not certify NAS eligibility. NAS inspection requires a
+committed production declaration, every declared native/runtime recipe input,
+and a compatible data policy. Keep the app's local check and browser tests
+independent of remote access.
+
+Before live use, prove an exact committed build, native frontend compilation,
+warm native/Linux dependency-cache reuse with zero installer calls, a verified
+Linux/amd64 runtime startup and checksum-bound missing-blob transfer. Publication
+must retain current state after upload failure and reconcile a lost activation
+acknowledgement through status rather than replaying activation. Preserve the
+exact descriptor for unresolved or recovery-required operations.
+
+The NAS migration plan still owns isolated app parity, backup/restore rehearsals,
+sole-writer cutover, exact HTTPS-origin preservation, post-write data return,
+another-device observation and restart acceptance. Source tests, generated
+Compose or a parsed Docker archive do not establish those live facts. Update the
+installed skill only through its normal installer after the integrated workflow
+is verified; editing these source references does not install it.

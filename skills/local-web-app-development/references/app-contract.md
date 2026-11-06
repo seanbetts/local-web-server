@@ -176,3 +176,41 @@ edit the host registry, Caddy, releases or live services, and never activate the
 intermediate foundation commit.
 
 When a valid app architecture exceeds the platform contract, stop at the ownership boundary and report the missing platform capability. Do not weaken the domain design, bypass doctor, or hand-edit host configuration to make a diagnostic disappear.
+
+
+## NAS production source contract
+
+A Mac-compatible app is not automatically eligible for NAS publication. Preserve
+an existing app-owned `production` object during ordinary platform updates. Do
+not infer a Linux recipe from a Mac `build.commands` or `service.startCommand`.
+The configured NAS target must use explicit `production.buildCommands` and
+`production.nativeDependencies`: installers run only on dependency-cache misses,
+and native frontend compilation runs on the Mac rather than under amd64
+emulation. Commit every declared dependency input and the vendored UI artifact.
+
+Generated static apps declare `recipeVersion`, `dataContract: none`,
+`rollbackPolicy: compatible`, `runtime: null`, the native npm build and its locked
+dependency cache. A generated service keeps its Mac contract until an app-owned
+production recipe and its actual Dockerfile/lockfiles are supplied. Missing
+production inputs or `migration-required` are NAS eligibility blockers, not
+instructions to weaken Doctor or activate on a different target.
+
+A NAS service declares its pinned base image, Linux ABI, exact dependency inputs,
+Dockerfile, direct container command, resource ceilings and individual secret
+filenames. Keep values, live records and private host configuration out of source.
+Use only `{port}`, `{state}`, `{publicOrigin}`, `{bindHost}` and `{proxyAddress}`
+in container arguments. The app owns data compatibility, writer fencing and
+consistent restore. A code rollback cannot silently restore an old database.
+
+The source contract does not establish installed CLI routing, live NAS health,
+origin preservation or migration completion. Follow the maintained migration
+plan's remaining acceptance gates. Never interpret unavailable NAS access as
+permission for automatic Mac publication or direct production-file fallback.
+
+The recipe's `lockfiles` list is the complete declared dependency input set,
+including package metadata, installer helpers and vendored archives when needed.
+Dependency installers see only those files in an isolated context; an undeclared
+helper or app source file is unavailable. Linux dependency preparation also sees
+its declared Dockerfile. Changes to any declared input invalidate the cache;
+ordinary app source changes do not. Do not broaden the list to runtime state or
+credentials to make an installer succeed.

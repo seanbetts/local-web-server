@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import time
@@ -10,6 +11,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from collections.abc import Mapping
 
 
 _COMMAND_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
@@ -124,12 +126,21 @@ class ProcessRunner:
         timeout_seconds: float = 300,
         stop_seconds: float = 0.5,
         poll_seconds: float = 0.01,
+        public_environment: Mapping[str, str] | None = None,
     ) -> None:
         if timeout_seconds <= 0 or stop_seconds <= 0 or poll_seconds <= 0:
             raise ValueError("process runner timing must be positive")
         self._timeout_seconds = timeout_seconds
         self._stop_seconds = stop_seconds
         self._poll_seconds = poll_seconds
+        public = dict(public_environment or {})
+        if any(
+            type(name) is not str or re.fullmatch(r'(?:VITE_|PUBLIC_)[A-Za-z0-9_]+', name) is None
+            or type(value) is not str or '\0' in value
+            for name, value in public.items()
+        ):
+            raise ValueError('build inputs must be explicit public environment values')
+        self._public_environment = public
 
     def run(self, repository: Path, commands: tuple[ProcessCommand, ...]) -> None:
         """Run immutable argv commands under one total deadline."""
@@ -146,6 +157,7 @@ class ProcessRunner:
             home = Path(text)
             home.chmod(0o700)
             environment = _environment(home)
+            environment.update(self._public_environment)
             for command in commands:
                 self._run_command(resolved, command, environment, deadline)
 

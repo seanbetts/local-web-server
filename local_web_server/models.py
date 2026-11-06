@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from .nas_models import ExternalServiceLink, NasTarget
+from .nas_recipe import ProductionRecipe
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class AppManifest:
     service: ServiceSpec | None
     home: HomePresentation = field(default_factory=HomePresentation)
     platform: PlatformSpec | None = None
+    production: ProductionRecipe | None = None
 
 
 @dataclass(frozen=True)

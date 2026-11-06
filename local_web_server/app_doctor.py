@@ -118,6 +118,26 @@ class _ThemeLinkParser(HTMLParser):
 
 def _diagnostic(code: str, app: str) -> Diagnostic:
     values = {
+        "nas.production-missing": (
+            "error", "Application has no committed NAS production recipe.",
+            "Add an app-owned production declaration with explicit native build and Linux runtime recipes; retain the Mac target until NAS checks pass.",
+        ),
+        "nas.migration-required": (
+            "error", "Application requires an explicit data migration before NAS publication.",
+            "Use the app-owned migration procedure with a writer fence, consistent snapshot and reviewed recovery; ordinary deployment cannot apply it.",
+        ),
+        "nas.recipe-input-untracked": (
+            "error", "A declared production recipe input is not tracked by Git.",
+            "Add and commit the declared native lockfiles, vendored package and Linux Dockerfile/lockfiles before NAS publication.",
+        ),
+        "nas.recipe-input-invalid": (
+            "error", "A declared production recipe input is missing, linked or unreadable.",
+            "Restore every declared recipe input as a regular repository file; do not use local secrets, installed dependencies or state as inputs.",
+        ),
+        "nas.recipe-input-dirty": (
+            "error", "A declared production recipe input has uncommitted changes.",
+            "Commit or restore the declared production recipe inputs before NAS publication.",
+        ),
         "repository.invalid": (
             "error",
             "Repository is not a readable Git worktree.",
@@ -345,6 +365,11 @@ def _managed_dirty(repository: Path, managed: tuple[Path, ...]) -> bool:
 
 
 class AppDoctor:
+    def __init__(self, *, target_kind: str = 'macos') -> None:
+        if target_kind not in ('macos', 'nas-docker'):
+            raise ValueError('unsupported Doctor target')
+        self.target_kind = target_kind
+
     def inspect(self, repository: Path) -> DoctorReport:
         requested = Path(repository)
         app = _repository_name(requested)
@@ -446,6 +471,9 @@ class AppDoctor:
                 pass
             return DoctorReport(app, False, (_diagnostic("manifest.invalid", app),))
 
+        if self.target_kind == 'nas-docker':
+            self._inspect_nas_recipe(repository, manifest, tracked, diagnostics, app, replacements)
+
         if manifest.platform is None:
             diagnostics.append(
                 _diagnostic(
@@ -514,6 +542,36 @@ class AppDoctor:
             diagnostics.append(_diagnostic("theme.link-invalid", app))
 
         return self._report(app, diagnostics)
+
+    @staticmethod
+    def _inspect_nas_recipe(repository, manifest, tracked, diagnostics, app, replacements):
+        recipe = manifest.production
+        if recipe is None:
+            diagnostics.append(_diagnostic('nas.production-missing', app))
+            return
+        if recipe.rollback_policy != 'compatible':
+            diagnostics.append(_diagnostic('nas.migration-required', app))
+        inputs = set()
+        if recipe.native_dependencies is not None:
+            inputs.update(Path(path) for path in recipe.native_dependencies.lockfiles)
+        if recipe.runtime is not None:
+            inputs.update(Path(path) for path in recipe.runtime.lockfiles)
+            inputs.add(Path(recipe.runtime.dockerfile))
+        for path in sorted(inputs):
+            if path not in tracked:
+                diagnostics.append(_diagnostic('nas.recipe-input-untracked', app))
+                continue
+            try:
+                _read_known(repository, path, 32 * 1024 * 1024, replacements)
+            except _InspectionError:
+                diagnostics.append(_diagnostic('nas.recipe-input-invalid', app))
+        dirty_inputs = tuple(path for path in sorted(inputs & tracked)
+                             if replacements is None or path not in replacements)
+        try:
+            if dirty_inputs and _managed_dirty(repository, dirty_inputs):
+                diagnostics.append(_diagnostic('nas.recipe-input-dirty', app))
+        except _InspectionError:
+            diagnostics.append(_diagnostic('repository.invalid', app))
 
     @staticmethod
     def _report(app: str, diagnostics: list[Diagnostic]) -> DoctorReport:

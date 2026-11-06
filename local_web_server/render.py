@@ -106,6 +106,8 @@ def _render_frontend_cache_headers(lines: list[str], app_id: str, indent: str) -
 
 
 def _render_caddy_opening(registry: HostRegistry) -> list[str]:
+    if registry.target.kind == 'nas-docker' and registry.ingress_mode != TAILSCALE_SERVE:
+        raise ValueError('NAS ingress requires private Tailscale HTTPS')
     if registry.ingress_mode == TRUSTED_LAN:
         return [":80 {"]
     if registry.ingress_mode == TAILSCALE_SERVE:
@@ -157,12 +159,15 @@ def render_caddyfile(
     """Render the plain-HTTP Caddy configuration for all registered applications."""
     if prepare_tailscale_port_migration and registry.ingress_mode != TAILSCALE_SERVE:
         raise ValueError("port migration preparation requires Tailscale ingress")
+    nas = registry.target.kind == 'nas-docker'
+    if nas and prepare_tailscale_port_migration:
+        raise ValueError('Mac port migration is unavailable for NAS ingress')
     apps = [(_manifest_for(app, manifests), app) for app in registry.apps]
     apps.sort(key=lambda item: -len(item[0].route))
 
     opening = _render_caddy_opening(registry)
     lines = list(opening)
-    theme_root = Path(registry.runtime_root) / "platform"
+    theme_root = Path('/srv/platform/current') if nas else Path(registry.runtime_root) / "platform"
     lines.extend(
         (
             f"    handle {THEME_ROUTE} {{",
@@ -219,11 +224,12 @@ def render_caddyfile(
         service = manifest.service if manifest.kind == "service" else None
         split_service = service is not None and service.frontend_output is not None
         route_is_health = split_service and manifest.health_path == route
+        upstream = f'app-{app.id}:{app.port}' if nas else f'127.0.0.1:{app.port}'
         if route_is_health:
             lines.extend(
                 (
                     f"    handle_path {route} {{",
-                    f"        reverse_proxy 127.0.0.1:{app.port}",
+                    f"        reverse_proxy {upstream}",
                     "    }",
                     f"    redir {route} {route}/ 308",
                 )
@@ -232,7 +238,7 @@ def render_caddyfile(
             lines.append(f"    redir {route} {route}/ 308")
         if manifest.kind == "static":
             lines.append(f"    handle_path {route}/* {{")
-            root = RuntimeLayout(registry.runtime_root, app.id).current
+            root = Path('/srv/apps') / app.id / 'current' if nas else RuntimeLayout(registry.runtime_root, app.id).current
             lines.append(f"        root * {_quoted_path(root)}")
             _render_frontend_cache_headers(lines, app.id, "        ")
             lines.append("        file_server")
@@ -242,7 +248,7 @@ def render_caddyfile(
                 raise ValueError(f"service app has no port: {app.id}")
             if not split_service:
                 lines.append(f"    handle_path {route}/* {{")
-                lines.append(f"        reverse_proxy 127.0.0.1:{app.port}")
+                lines.append(f"        reverse_proxy {upstream}")
                 lines.append("    }")
             else:
                 lines.append(f"    handle_path {route}/* {{")
@@ -250,15 +256,15 @@ def render_caddyfile(
                     health_path = manifest.health_path.removeprefix(route)
                     lines.append(f"        @{app.id}_health path {health_path}")
                     lines.append(f"        handle @{app.id}_health {{")
-                    lines.append(f"            reverse_proxy 127.0.0.1:{app.port}")
+                    lines.append(f"            reverse_proxy {upstream}")
                     lines.append("        }")
                 for index, proxy_path in enumerate(service.proxy_paths):
                     matcher = f"{app.id.replace('-', '_')}_proxy_{index}"
                     lines.append(f"        @{matcher} path {proxy_path}*")
                     lines.append(f"        handle @{matcher} {{")
-                    lines.append(f"            reverse_proxy 127.0.0.1:{app.port}")
+                    lines.append(f"            reverse_proxy {upstream}")
                     lines.append("        }")
-                release_root = RuntimeLayout(registry.runtime_root, app.id).current
+                release_root = Path('/srv/apps') / app.id / 'current' if nas else RuntimeLayout(registry.runtime_root, app.id).current
                 frontend_output = service.frontend_output
                 if (
                     frontend_output.is_absolute()
@@ -286,7 +292,7 @@ def render_caddyfile(
     lines.extend(
         (
             "    handle {",
-            f"        root * {_quoted_path(Path(registry.runtime_root))}",
+            f"        root * {_quoted_path(theme_root if nas else Path(registry.runtime_root))}",
             "        rewrite * /home.html",
             "        file_server",
             "    }",

@@ -75,6 +75,19 @@ class ProcessRunnerTests(unittest.TestCase):
 
         self.assertNotIn("private", str(raised.exception))
 
+    def test_explicit_public_build_inputs_are_available_without_ambient_secrets(self):
+        with patch.dict(os.environ, {'PRIVATE_BUILD_SECRET': 'not-for-child'}):
+            ProcessRunner(public_environment={'VITE_PUBLIC_BASE_PATH': '/example/'}).run(
+                self.repository, (ProcessCommand('public build', (sys.executable, '-c',
+                    "import os; from pathlib import Path; "
+                    "assert os.environ['VITE_PUBLIC_BASE_PATH']=='/example/'; "
+                    "assert 'PRIVATE_BUILD_SECRET' not in os.environ; "
+                    "Path('built').write_text('ok')")),))
+        self.assertEqual((self.repository/'built').read_text(), 'ok')
+        for name in ('HOME', 'PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'PRIVATE_TOKEN'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                ProcessRunner(public_environment={name: 'override'})
+
     def test_total_timeout_terminates_descendants(self):
         marker = self.repository / "leaked-child.txt"
         child = (

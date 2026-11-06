@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from .icons import canonical_manifest_icon
 from .nas_models import ExternalServiceLink, NasTarget
+from .nas_recipe import parse_production_recipe
 from .models import (
     AppManifest,
     BackendProbeSpec,
@@ -578,7 +579,7 @@ def parse_manifest(content: str, *, source: str = "manifest") -> AppManifest:
         manifest,
         {
             "schemaVersion", "id", "title", "route", "kind", "build", "healthPath", "service",
-            "home", "platform",
+            "home", "platform", "production",
         },
         "manifest",
     )
@@ -602,6 +603,12 @@ def parse_manifest(content: str, *, source: str = "manifest") -> AppManifest:
         service = None
     _validate_service_release(build, service)
 
+    try:
+        production = (parse_production_recipe(manifest['production'], kind=kind)
+                      if 'production' in manifest else None)
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+
     return AppManifest(
         schema_version=schema_version,
         id=_app_id(manifest["id"], "manifest.id"),
@@ -611,6 +618,7 @@ def parse_manifest(content: str, *, source: str = "manifest") -> AppManifest:
         build=build,
         health_path=health_path,
         service=service,
+        production=production,
         home=_parse_home(manifest["home"]) if "home" in manifest else HomePresentation(),
         platform=(
             _parse_platform(manifest["platform"])

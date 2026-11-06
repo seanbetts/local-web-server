@@ -15,6 +15,7 @@ from local_web_server.app_provenance import (
     render_provenance,
 )
 from local_web_server.app_template import TemplateInputs, render_template
+from local_web_server.nas_recipe import ContainerBuildRecipe, production_declaration
 
 
 class AppDoctorTests(unittest.TestCase):
@@ -135,6 +136,59 @@ class AppDoctorTests(unittest.TestCase):
 
     def valid_adoption_replacements(self):
         return dict(self.adoption_files)
+
+    def test_nas_doctor_requires_tracked_recipe_inputs_but_preserves_mac_eligibility(self):
+        self.assertTrue(AppDoctor().inspect(self.repository).compatible)
+        report = AppDoctor(target_kind='nas-docker').inspect(self.repository)
+        self.assertFalse(report.compatible)
+        self.assertIn('nas.recipe-input-untracked', [item.code for item in report.diagnostics])
+        self.write_and_commit('package-lock.json', '{}')
+        self.assertTrue(AppDoctor(target_kind='nas-docker').inspect(self.repository).compatible)
+
+    def test_nas_doctor_explains_missing_recipe(self):
+        manifest = json.loads((self.repository / 'local-web.json').read_text())
+        manifest.pop('production', None)
+        self.write_and_commit('local-web.json', json.dumps(manifest))
+        self.assertTrue(AppDoctor().inspect(self.repository).compatible)
+        report = AppDoctor(target_kind='nas-docker').inspect(self.repository)
+        missing = next(item for item in report.diagnostics if item.code == 'nas.production-missing')
+        self.assertFalse(report.compatible)
+        self.assertIn('production', missing.remedy)
+        self.assertNotIn(str(self.repository), missing.remedy)
+
+    def test_nas_doctor_blocks_dirty_and_linked_dependency_inputs(self):
+        self.write_and_commit('package-lock.json', '{}')
+        (self.repository / 'package-lock.json').write_text('changed')
+        report = AppDoctor(target_kind='nas-docker').inspect(self.repository)
+        self.assertIn('nas.recipe-input-dirty', [item.code for item in report.diagnostics])
+        (self.repository / 'package-lock.json').unlink()
+        (self.repository / 'package-lock.json').symlink_to('/etc/passwd')
+        report = AppDoctor(target_kind='nas-docker').inspect(self.repository)
+        self.assertIn('nas.recipe-input-invalid', [item.code for item in report.diagnostics])
+
+    def test_nas_doctor_refuses_migration_required_even_with_all_recipe_inputs(self):
+        manifest = json.loads((self.repository / 'local-web.json').read_text())
+        manifest['kind'] = 'service'
+        manifest['healthPath'] = '/recipes/healthz'
+        manifest['service'] = dict(module='server/service.mjs', internalHealthPath='/healthz')
+        manifest['production'] = production_declaration('service', data_contract='store-v2',
+            rollback_policy='migration-required', runtime=ContainerBuildRecipe(
+                'node@sha256:' + 'a' * 64, 'node-24', ('runtime.lock',), 'Dockerfile.runtime',
+                ('node', 'server/service.mjs', '--port', '{port}'), 1, 512, health_runtime='node'))
+        self.write_and_commit('local-web.json', json.dumps(manifest))
+        self.write_and_commit('runtime.lock', 'locked')
+        self.write_and_commit('Dockerfile.runtime', 'ARG RUNTIME_IMAGE\nFROM ${RUNTIME_IMAGE}\n')
+        self.assertTrue(AppDoctor().inspect(self.repository).compatible)
+        report = AppDoctor(target_kind='nas-docker').inspect(self.repository)
+        self.assertFalse(report.compatible)
+        self.assertEqual([item.code for item in report.diagnostics], ['nas.migration-required'])
+
+    def test_nas_candidate_overlay_checks_declared_inputs_without_writing_them(self):
+        doctor = AppDoctor(target_kind='nas-docker')
+        report = doctor.inspect_candidate(self.repository, {Path('package-lock.json'): b'{}'},
+                                          frozenset({Path('package-lock.json')}))
+        self.assertTrue(report.compatible)
+        self.assertFalse((self.repository / 'package-lock.json').exists())
 
     def test_valid_generated_repository_has_no_diagnostics(self):
         report = AppDoctor().inspect(self.repository)

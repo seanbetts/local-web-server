@@ -121,3 +121,34 @@ keyboard/focus, accessibility, theme restoration, and desktop/390px/320px layout
 in light/dark modes. Observe automatic network attempts as well as CSP enforcement.
 Doctor remains structural; it does not validate payload semantics. UI adoption,
 source integration, activation, deployment and push remain separate boundaries.
+
+## Production recipe ownership
+
+`production.buildCommands` contains the native frontend or pure-code build only.
+`production.nativeDependencies` declares the exact native lock/input files,
+installer argv and dependency-output directories; the platform caches these by
+native OS, architecture, Node ABI and recipe identity. The existing `build.release`
+composer still owns the final source-to-release layout.
+
+For a NAS service, `production.runtime` is a separate app-owned Linux/amd64
+recipe. Its image is pinned by digest and its dependencies are prepared on the
+Mac. The NAS receives verified prepared bytes and runs no package installer or
+source compiler. Container commands may substitute only `{port}`, `{state}`,
+`{publicOrigin}`, `{bindHost}` and `{proxyAddress}`. Keep code under `/app/current`,
+durable data under `/state`, and individual selected secrets under `/run/secrets`.
+Do not mount a Mac checkout or reuse a Mac virtual environment.
+
+Declare `dataContract` and `rollbackPolicy` explicitly. Ordinary publication
+requires `compatible`; incompatible startup migrations require an app-owned
+migration, writer fence, consistent snapshot and reviewed recovery. Code rollback
+never restores an old data snapshot. The service's listener and proxy trust must
+be tested for its selected target; a Dockerfile and structural Doctor result do
+not prove that Linux startup or same-origin access works.
+
+The recipe's `lockfiles` list is the complete declared dependency input set,
+including package metadata, installer helpers and vendored archives when needed.
+Dependency installers see only those files in an isolated context; an undeclared
+helper or app source file is unavailable. Linux dependency preparation also sees
+its declared Dockerfile. Changes to any declared input invalidate the cache;
+ordinary app source changes do not. Do not broaden the list to runtime state or
+credentials to make an installer succeed.
