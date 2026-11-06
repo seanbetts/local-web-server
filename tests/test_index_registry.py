@@ -3,7 +3,8 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from local_web_server.index_registry import render_index_registry
+from local_web_server.index_registry import render_index_registry, render_index_registry_v2
+from local_web_server.nas_models import ExternalServiceLink
 from local_web_server.models import (
     AppManifest,
     BackendProbeSpec,
@@ -101,6 +102,25 @@ class IndexRegistryTests(unittest.TestCase):
                 ],
             },
         )
+
+    def test_schema_two_keeps_services_separate_and_schema_one_unchanged(self):
+        legacy = render_index_registry(self.registry, self.manifests)
+        registry = replace(self.registry, services=(
+            ExternalServiceLink('jellyfin', 'Jellyfin', 'https://local.example.ts.net:8444', 'video', '#3859D6'),
+        ))
+        value = json.loads(render_index_registry_v2(registry, self.manifests))
+        self.assertEqual(value['schemaVersion'], 2)
+        self.assertEqual(value['apps'], json.loads(legacy)['apps'])
+        self.assertEqual(value['services'], [{
+            'id': 'jellyfin', 'title': 'Jellyfin', 'url': 'https://local.example.ts.net:8444',
+            'icon': 'video', 'accent': '#3859D6',
+        }])
+        self.assertEqual(render_index_registry(registry, self.manifests), legacy)
+        self.assertEqual(render_index_registry_v2(registry, self.manifests),
+                         render_index_registry_v2(registry, self.manifests))
+
+    def test_schema_two_has_empty_service_collection_for_old_profiles(self):
+        self.assertEqual(json.loads(render_index_registry_v2(self.registry, self.manifests))['services'], [])
 
     def test_is_byte_identical_newline_terminated_and_uses_canonical_legacy_icons(self):
         first = render_index_registry(self.registry, self.manifests)

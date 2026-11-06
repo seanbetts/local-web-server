@@ -11,6 +11,8 @@ from .models import AppManifest, HostApp, HostRegistry
 INDEX_ASSET_ROUTE = "/_local-web/platform/index"
 INDEX_REGISTRY_NAME = "registry-v1.json"
 INDEX_REGISTRY_ROUTE = f"{INDEX_ASSET_ROUTE}/{INDEX_REGISTRY_NAME}"
+INDEX_REGISTRY_V2_NAME = "registry-v2.json"
+INDEX_REGISTRY_V2_ROUTE = f"{INDEX_ASSET_ROUTE}/{INDEX_REGISTRY_V2_NAME}"
 
 
 def _manifest_for(app: HostApp, manifests: Mapping[str, AppManifest]) -> AppManifest:
@@ -44,3 +46,17 @@ def render_index_registry(
         )
     payload = {"schemaVersion": 1, "apps": apps}
     return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def render_index_registry_v2(
+    registry: HostRegistry, manifests: Mapping[str, AppManifest]
+) -> bytes:
+    """Publish link-only NAS services without changing the legacy catalogue."""
+    payload = json.loads(render_index_registry(registry, manifests))
+    payload['schemaVersion'] = 2
+    payload['services'] = [
+        {'id': link.id, 'title': link.title, 'url': link.url,
+         'icon': canonical_manifest_icon(link.icon), 'accent': link.accent}
+        for link in registry.services
+    ]
+    return (json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n').encode()

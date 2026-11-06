@@ -43,6 +43,21 @@ refuse unknown profile, history, permission, symlink, or recovery state. See the
 The public `config/apps.example.json` is documentation only. It is never an
 automatic fallback for a missing private profile.
 
+Schema 3 adds a host target (`macos` or `nas-docker`) and a separate `services`
+collection of external HTTPS links. Existing schema 1/2 profiles continue to
+select macOS with no external services. A NAS target requires Tailscale ingress;
+it cannot fall through to LaunchAgents or local runtime operations. The supported
+`host configure` preview/apply transaction preserves managed app registrations
+and the effective public origin while recording the profile change and backup.
+
+The System Index labels managed **Local Web apps** and external **NAS services**
+separately. Only managed apps receive health probes and availability indicators.
+Service links contain no credentials, queries or fragments; authentication stays
+with the destination service. The new reader uses `registry-v2.json` with separate
+`apps` and `services`. `registry-v1.json` retains its original app-only contract for
+open older pages. Both catalogues publish after verified assets and before the
+home page switches; failed publication preserves the prior home page.
+
 ## Ingress modes
 
 Host registry schema version 1 uses `trusted-lan`: Caddy listens on HTTP port 80.

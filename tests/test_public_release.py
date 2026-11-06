@@ -490,6 +490,19 @@ class PublicTrackedTreeTests(PublicReleaseTestCase):
         self.repository.commit("use generic version two host example")
         verify_public_tree(self.repository.path)
 
+    def test_generic_version_three_profile_and_service_catalogue_pass(self):
+        payload = json.loads(self.repository.path.joinpath('config/apps.example.json').read_text())
+        payload.pop('host')
+        payload.update(schemaVersion=3, publicOrigin='https://local.example.ts.net',
+                       ingressMode='tailscale-serve', target={'kind': 'macos'}, services=[{
+                           'id': 'jellyfin', 'title': 'Jellyfin',
+                           'url': 'https://local.example.ts.net:8444', 'icon': 'video', 'accent': '#3859D6',
+                       }])
+        self.repository.write('config/apps.example.json', json.dumps(payload) + '\n')
+        self.repository.commit('generic schema three example')
+        verify_public_tree(self.repository.path)
+
+
     def test_rejects_staged_tree_ambiguity(self):
         self.repository.write("README.md", "# Local Web Server\n\nStaged but uncommitted.\n")
         _git(self.repository.path, "add", "--", "README.md")

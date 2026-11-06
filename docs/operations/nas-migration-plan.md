@@ -52,7 +52,7 @@ New names below are proposed interfaces to implement, not currently available co
 
 **Consumes:** current private profile, app manifests, deployment pointers and existing revision chain. **Produces:** validated `NasTarget` and a private per-app readiness inventory.
 
-- [ ] Inspect each current app's actual durable paths, secrets, native dependencies, schema/version, writer entry points and backup procedure. Include Plotter media and Job Hunt's source/runtime data distinction. Record private facts in the existing private task location.
+- [ ] Inspect each current app's actual durable paths, secrets, native dependencies, schema/version, writer entry points and backup procedure. Include travel app media and career app's source/runtime data distinction. Record private facts in the existing private task location.
 - [ ] Add `test_schema3_macos_preserves_existing_origin`, `test_nas_target_rejects_lan_fallback` and schema-1/2 regression fixtures. Assert target dispatch and service links do not alter existing app identities/paths.
 - [ ] Implement explicit profile migration preview/apply with backup/revision publication; do not apply it during development.
 - [ ] Define per-app readiness: source build, Linux runtime, data copy/restore, origin/proxy trust, CLI/agent route and backup coverage. No app is eligible by frontend health alone.
@@ -124,9 +124,9 @@ New names below are proposed interfaces to implement, not currently available co
 
 **Consumes:** Task 1's private inventory and Tasks 3–5's target. **Produces:** seven independently eligible app releases plus app-owned copy/restore and writer-fencing procedures.
 
-- [ ] Prepare static apps first, then Movement Library, Villa Season Ticket, Plotter, Job Hunt and Financial Planning. Resolve blockers in an app's domain scope; do not weaken the platform contract.
+- [ ] Prepare static apps first, then routine app, ticket app, travel app, career app and finance app. Resolve blockers in an app's domain scope; do not weaken the platform contract.
 - [ ] Use copies/synthetic state to prove records, ETags/revisions, schema compatibility, media/reference integrity and read/write behavior. Disable automatic legacy-state adoption on NAS.
-- [ ] Route Plotter's existing API CLI to the target. Update Movement check-in, Job Hunt tracker and Finance refresh/read workflows to use supported app-owned NAS routes. Block implicit local production-file fallback; retain preview/apply and original recovery semantics.
+- [ ] Route travel app's existing API CLI to the target. Update routine check-in, career app tracker and Finance refresh/read workflows to use supported app-owned NAS routes. Block implicit local production-file fallback; retain preview/apply and original recovery semantics.
 - [ ] Separate source-controlled documents from mutable runtime records. Keep secrets and source repositories on their intended machines; give containers only required selected inputs.
 - [ ] Rehearse consistent backup/copy and both rollback directions, including NAS writes made after cutover, on disposable stores. Never copy a live SQLite main file alone or permit simultaneous Mac/NAS writers.
 - [ ] Run each app's Doctor, local check, E2E and composed app check against isolated fixtures. Verify desktop/mobile, themes, normal mutations and actual context/offline downloads where supported. Commit focused app changes, preserving unrelated work.

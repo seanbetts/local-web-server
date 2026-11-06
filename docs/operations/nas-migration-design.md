@@ -158,11 +158,11 @@ stop at the Mac deployment and bring the specific blocker back for a decision.
 | App | Durable state / adaptation to prove before cutover |
 | --- | --- |
 | Shirts; Cowork Architecture | Static outputs; confirm there are no unrecorded runtime dependencies |
-| Movement Library | Routine store/backups; browser mutations and agent/check-in route reach NAS |
-| Villa Season Ticket | SQLite state/backups; explicit NAS state path, no automatic legacy-state adoption |
-| Plotter | Trips, media, backups and maintenance locks; configure existing API-backed trip CLI for NAS |
-| Job Hunt | Classify source-controlled strategy/documents versus mutable tracker records; move runtime records only and update direct-file agent workflows |
-| Financial Planning | SQLite, snapshots and refresh evidence; preserve calculations and preview/apply monthly-refresh workflow through an app-owned NAS operation |
+| routine app | Routine store/backups; browser mutations and agent/check-in route reach NAS |
+| ticket app | SQLite state/backups; explicit NAS state path, no automatic legacy-state adoption |
+| travel app | Trips, media, backups and maintenance locks; configure existing API-backed trip CLI for NAS |
+| career app | Classify source-controlled strategy/documents versus mutable tracker records; move runtime records only and update direct-file agent workflows |
+| finance app | SQLite, snapshots and refresh evidence; preserve calculations and preview/apply monthly-refresh workflow through an app-owned NAS operation |
 
 NAS becomes the only writable production store. Local development uses isolated
 fixtures/copies. Remove implicit production fallbacks to Mac repository data.

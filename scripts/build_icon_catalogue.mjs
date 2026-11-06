@@ -87,7 +87,7 @@ async function buildCatalogue() {
     await readFile(resolve(iconPackageRoot, 'tabler-nodes-outline.json'), 'utf8'),
   );
   const icons = {};
-  for (const name of [...manifest, ...actions, ...internal].sort()) {
+  for (const name of [...new Set([...manifest, ...actions, ...internal])].sort()) {
     const source = sourceNames[name] ?? name;
     const iconNodes = nodes[source];
     if (!Array.isArray(iconNodes) || iconNodes.length === 0) {

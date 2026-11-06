@@ -41,6 +41,7 @@ SERVICE_COMMAND_RESTORATION = "service-command-restoration"
 PUBLIC_BASE_PATH_MIGRATION = "public-base-path-migration"
 PUBLIC_BASE_PATH_RESTORATION = "public-base-path-restoration"
 BACKUP_RESTORATION = "backup-restoration"
+PROFILE_CONFIGURATION = "profile-configuration"
 _OPERATIONS = frozenset((REGISTRATION, SERVICE_COMMAND_MIGRATION,
                         SERVICE_COMMAND_RESTORATION, PUBLIC_BASE_PATH_MIGRATION,
                         PUBLIC_BASE_PATH_RESTORATION))
@@ -153,7 +154,7 @@ def parse_revision(content: bytes) -> Revision:
         raise HostProfileStoreError(_UNSAFE)
     if operation == INITIALISATION:
         valid_operation = app_id is None and previous is None
-    elif operation == BACKUP_RESTORATION:
+    elif operation in (BACKUP_RESTORATION, PROFILE_CONFIGURATION):
         valid_operation = app_id is None and _hex(previous)
     else:
         valid_operation = (operation in _OPERATIONS and isinstance(app_id, str)
@@ -611,7 +612,7 @@ class HostProfileStore:
 
     @_bounded
     def _change(self, operation, app_id, expected_before, expected_after, *, expected_revisions=None):
-        valid_app = (app_id is None if operation == BACKUP_RESTORATION
+        valid_app = (app_id is None if operation in (BACKUP_RESTORATION, PROFILE_CONFIGURATION)
                      else isinstance(app_id, str) and _APP_ID.fullmatch(app_id))
         if (not valid_app
                 or not isinstance(expected_before, bytes) or not isinstance(expected_after, bytes)):
@@ -645,6 +646,11 @@ class HostProfileStore:
 
     def publish_public_base_path_restoration(self, app_id, expected_before, expected_after):
         return self._change(PUBLIC_BASE_PATH_RESTORATION, app_id, expected_before, expected_after)
+
+    def publish_configuration(self, expected_before, expected_after, *, expected_revisions=None):
+        """Append an auditable prepared profile change without replacing history."""
+        return self._change(PROFILE_CONFIGURATION, None, expected_before, expected_after,
+                            expected_revisions=expected_revisions)
 
     def publish_backup_restoration(self, expected_before, expected_after, *, expected_revisions=None):
         """Append one fixed restoration audit event; keep local history intact."""

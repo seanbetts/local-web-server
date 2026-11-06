@@ -157,3 +157,19 @@ body {
     animation: none;
   }
 }
+
+.system-index__section + .system-index__section {
+  margin-top: var(--lwp-space-8);
+}
+
+.system-index__section-title {
+  margin: 0 0 var(--lwp-space-4);
+  font-family: var(--lwp-font-sans);
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--lwp-colour-text);
+}
+
+.system-index-card__external {
+  color: var(--lwp-colour-text-muted);
+}

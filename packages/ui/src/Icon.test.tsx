@@ -6,16 +6,23 @@ import { Icon, PLATFORM_ICON_NAMES, PLATFORM_MANIFEST_ICON_NAMES } from './Icon'
 
 describe('Icon', () => {
   it('keeps the explicit React allowlist aligned with the generated catalogue', () => {
-    const expected = [
+    const expected = [...new Set([
       ...iconCatalogue.manifest,
       ...iconCatalogue.actions,
       'device-desktop',
       'sun',
       'moon',
-    ].sort();
+    ])].sort();
 
     expect([...PLATFORM_ICON_NAMES].sort()).toEqual(expected);
+    expect(new Set(PLATFORM_ICON_NAMES).size).toBe(PLATFORM_ICON_NAMES.length);
     expect(PLATFORM_MANIFEST_ICON_NAMES).toEqual(iconCatalogue.manifest);
+  });
+
+  it('allows semantic NAS service icons as manifest identities', () => {
+    for (const name of ['server', 'video', 'download', 'search', 'radar', 'device-tv', 'music']) {
+      expect(PLATFORM_MANIFEST_ICON_NAMES).toContain(name);
+    }
   });
 
   it('renders every allowlisted Tabler icon with safe shared geometry', () => {

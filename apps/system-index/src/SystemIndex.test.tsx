@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SystemIndex } from './SystemIndex';
@@ -133,4 +133,34 @@ describe('SystemIndex', () => {
     ]);
   });
 
+});
+
+const services = [
+  { id: 'jellyfin', title: 'Jellyfin', url: 'https://local.example.ts.net:8444', icon: 'photo', accent: '#75A7FF' },
+  { id: 'nas-admin', title: 'NAS Administration', url: 'https://local.example.ts.net:8443', icon: 'database', accent: '#76D39B' },
+];
+
+describe('System Index sections', () => {
+  it('loads the versioned catalogue and renders separate accessible sections without service probes', async () => {
+    const fetchRegistry = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...registry, schemaVersion: 2, services }) });
+    vi.stubGlobal('fetch', fetchRegistry);
+    render(<SystemIndex />);
+    const serviceSection = await screen.findByRole('region', { name: 'NAS services' });
+    expect(screen.getByRole('heading', { level: 1, name: 'System Index' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Local Web apps' })).toBeVisible();
+    expect(within(serviceSection).getByRole('heading', { level: 3, name: 'Jellyfin' })).toBeVisible();
+    const serviceLink = within(serviceSection).getByRole('link', { name: 'Open Jellyfin (external service)' });
+    expect(serviceLink).toHaveAttribute('href', services[0].url);
+    expect(within(serviceSection).queryByRole('status')).not.toBeInTheDocument();
+    expect(serviceSection).toHaveTextContent('External service');
+    expect(fetchRegistry).toHaveBeenCalledWith('/_local-web/platform/index/registry-v2.json', { cache: 'no-store' });
+    expect(controller.create).toHaveBeenCalledWith(expect.anything(), registry.apps, expect.any(Function));
+  });
+
+  it.each([1, 2])('hides an empty service section for schema %s', async (schemaVersion) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...registry, schemaVersion, ...(schemaVersion === 2 ? { services: [] } : {}) }) }));
+    render(<SystemIndex />);
+    await screen.findByRole('heading', { level: 2, name: 'Local Web apps' });
+    expect(screen.queryByRole('region', { name: 'NAS services' })).not.toBeInTheDocument();
+  });
 });

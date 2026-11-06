@@ -964,7 +964,7 @@ def _config_example_rule(value: object) -> str | None:
         expected_keys = {"schemaVersion", "host", "runtimeRoot", "apps"}
         if value.get("host") != "example-mac.local":
             return "tree.example-registry"
-    elif schema_version == 2:
+    elif schema_version in (2, 3):
         expected_keys = {
             "schemaVersion",
             "publicOrigin",
@@ -972,6 +972,10 @@ def _config_example_rule(value: object) -> str | None:
             "runtimeRoot",
             "apps",
         }
+        if schema_version == 3:
+            expected_keys |= {'target', 'services'}
+            if value.get('target') != {'kind': 'macos'} or not _generic_services(value.get('services')):
+                return 'tree.example-registry'
         if (
             value.get("publicOrigin") != "https://local.example.ts.net"
             or value.get("ingressMode") != "tailscale-serve"
@@ -1049,11 +1053,37 @@ def _config_example_rule(value: object) -> str | None:
     return None
 
 
+def _generic_services(value: object) -> bool:
+    if not isinstance(value, list):
+        return False
+    seen = set()
+    for link in value:
+        if (not isinstance(link, dict) or set(link) != {'id', 'title', 'url', 'icon', 'accent'}
+                or not isinstance(link.get('id'), str)
+                or re.fullmatch(r'[a-z][a-z0-9-]*', link['id']) is None
+                or link['id'] in seen
+                or not isinstance(link.get('title'), str) or not link['title']
+                or not isinstance(link.get('url'), str)
+                or re.fullmatch(r'https://local\.example\.ts\.net:[1-9][0-9]{0,4}', link['url']) is None
+                or int(link['url'].rsplit(':', 1)[1]) > 65535
+                or not isinstance(link.get('icon'), str)
+                or re.fullmatch(r'[a-z][a-z0-9-]*', link['icon']) is None
+                or not isinstance(link.get('accent'), str)
+                or re.fullmatch(r'#[0-9A-F]{6}', link['accent']) is None):
+            return False
+        seen.add(link['id'])
+    return True
+
+
 def _index_fixture_is_generic(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != {"schemaVersion", "apps"}:
+    if not isinstance(value, dict):
+        return False
+    version = value.get('schemaVersion')
+    keys = {'schemaVersion', 'apps'} | ({'services'} if version == 2 else set())
+    if set(value) != keys or (version == 2 and not _generic_services(value['services'])):
         return False
     apps = value.get("apps")
-    if value.get("schemaVersion") != 1 or not isinstance(apps, list) or not apps:
+    if type(version) is not int or version not in (1, 2) or not isinstance(apps, list) or not apps:
         return False
     expected_keys = {
         "id",
@@ -1127,7 +1157,7 @@ def _text_content_rule(relative: str, text: str) -> str | None:
             decoded = None
         if relative == "config/apps.example.json":
             return _config_example_rule(decoded)
-        if relative == "apps/system-index/fixtures/registry-v1.json":
+        if relative in {"apps/system-index/fixtures/registry-v1.json", "apps/system-index/fixtures/registry-v2.json"}:
             return None if _index_fixture_is_generic(decoded) else "content.inventory"
         if _has_unsafe_environment_field(decoded):
             return "content.environment-file"

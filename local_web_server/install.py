@@ -15,7 +15,10 @@ from typing import Literal, Protocol
 
 from .config import ConfigError, probe_environment, validate_registered_app
 from .git_build import GitRepository
-from .index_registry import INDEX_REGISTRY_NAME, render_index_registry
+from .index_registry import (
+    INDEX_REGISTRY_NAME, INDEX_REGISTRY_V2_NAME,
+    render_index_registry, render_index_registry_v2,
+)
 from .ingress import IngressVerificationError, TailscaleServeIngressVerifier
 from .models import AppManifest, HostRegistry
 from .public_origin import TAILSCALE_CADDY_PORT, TAILSCALE_SERVE
@@ -197,6 +200,8 @@ class Installer:
         theme_gate: ThemeGate | None = None,
         ingress_verifier: TailscaleServeIngressVerifier | None = None,
     ):
+        if registry.target.kind != 'macos':
+            raise ValueError('NAS installation requires the NAS installer; macOS fallback is disabled')
         self.registry = registry
         self.manifests = dict(manifests)
         self.repository = Path(repository).resolve()
@@ -474,6 +479,10 @@ class Installer:
             files[gallery_root.joinpath(*relative_path.parts)] = (content, 0o600)
         files[index_root / INDEX_REGISTRY_NAME] = (
             render_index_registry(self.registry, self.manifests),
+            0o600,
+        )
+        files[index_root / INDEX_REGISTRY_V2_NAME] = (
+            render_index_registry_v2(self.registry, self.manifests),
             0o600,
         )
         for host in self.registry.apps:

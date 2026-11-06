@@ -66,6 +66,8 @@ class FleetUpdater:
 
     def preview(self, registry_path: Path) -> FleetUpdatePlan:
         registry = load_registry(registry_path)
+        if registry.target.kind != "macos":
+            raise ValueError("NAS fleet update requires the NAS lifecycle; macOS fallback is disabled")
         return FleetUpdatePlan(
             apps=tuple(
                 self._preview_app(app, registry_path, registry.runtime_root)

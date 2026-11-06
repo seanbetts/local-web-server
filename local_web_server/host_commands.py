@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace as replace_plan
 from datetime import datetime, timezone
 from functools import wraps
 import os
+import json
 from pathlib import Path
 import re
 import stat
@@ -87,6 +88,7 @@ class HostCommandPlan:
     state_identity: tuple = field(default=(), repr=False)
     recovery: RecoveryPlan | None = field(default=None, repr=False)
     replace: bool = field(default=False, repr=False)
+    runtime_root_changed: bool = False
 
     def as_dict(self):
         return {"operation": self.operation, "action": self.action,
@@ -95,7 +97,8 @@ class HostCommandPlan:
                 "profileSha256": self.profile_sha256, "previousProfileSha256": self.previous_sha256,
                 "candidateProfileSha256": self.candidate_sha256,
                 "revisionId": self.revision_id, "revisionCount": self.revision_count,
-                "modes": list(self.planned_modes), "affectedCommands": list(self.affected_command_families)}
+                "modes": list(self.planned_modes), "affectedCommands": list(self.affected_command_families),
+                **({"runtimeRootChanged": self.runtime_root_changed} if self.operation == "configure" else {})}
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +269,22 @@ class HostCommands:
                           source_path=selected, source_identity=identity)
 
     @_bounded
+    def preview_configuration(self, source: Path) -> HostCommandPlan:
+        snapshot = self._snapshot()
+        selected, content, identity = _read_source(source)
+        current = load_registry(_RegistryText(snapshot.profile_bytes))
+        candidate = load_registry(_RegistryText(content))
+        if (candidate.schema_version != 3
+                or candidate.public_origin != current.public_origin
+                or candidate.ingress_mode != current.ingress_mode
+                or json.loads(content)["apps"] != json.loads(snapshot.profile_bytes)["apps"]):
+            raise HostCommandError("prepared configuration must preserve origin, ingress and managed apps")
+        plan = self._plan("configure", "already-current" if content == snapshot.profile_bytes else "configure-profile",
+                          "prepared-registry", content=content, snapshot=snapshot,
+                          source_path=selected, source_identity=identity)
+        return replace_plan(plan, runtime_root_changed=candidate.runtime_root != current.runtime_root)
+
+    @_bounded
     def preview_migration(self) -> HostCommandPlan:
         self._validate_paths()
         selected, content, identity = _read_source(self.paths.config / "apps.json", legacy=True)
@@ -321,6 +340,8 @@ class HostCommands:
             raise HostCommandError(_CHANGED)
         if plan.operation == "init":
             actual = self.preview_init(plan.source_path)
+        elif plan.operation == "configure":
+            actual = self.preview_configuration(plan.source_path)
         elif plan.operation == "migrate-registry":
             actual = self.preview_migration()
         elif plan.operation == "restore":
@@ -371,6 +392,14 @@ class HostCommands:
         if plan.operation == "recover":
             revision = self.store.recover(plan.recovery)
             return HostCommandResult(plan, True, revision)
+        if plan.operation == "configure":
+            path, digest = self._verified_backup(plan.snapshot)
+            self._repreview(plan)
+            if profile_digest(parse_host_backup(path).document_bytes) != digest:
+                raise HostCommandError(_CHANGED)
+            revision = self.store.publish_configuration(plan.snapshot.profile_bytes, plan.source_bytes,
+                    expected_revisions=plan.snapshot.revisions)
+            return HostCommandResult(plan, True, revision, digest, path)
         if plan.operation == "restore":
             if plan.snapshot is None:
                 revision = self.store.restore_snapshot(plan.candidate)

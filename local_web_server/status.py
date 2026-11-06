@@ -65,6 +65,8 @@ class StatusCollector:
         health: HealthChecker | None = None,
         repository_factory: Callable[[Path], Repository] = GitRepository,
     ):
+        if registry.target.kind != 'macos':
+            raise ValueError('NAS status requires the NAS adapter; macOS fallback is disabled')
         self.registry = registry
         self.services = services or LaunchctlServiceController()
         self.health = health or HttpHealthChecker()

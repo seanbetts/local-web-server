@@ -11,6 +11,9 @@ export type IndexApp = {
   backendHealthPath: string | null;
 };
 
+export type IndexService = Pick<IndexApp, 'id' | 'title' | 'icon' | 'accent'> & { url: string };
+export type IndexRegistry = { apps: readonly IndexApp[]; services: readonly IndexService[] };
+
 const APP_KEYS = [
   'id',
   'title',
@@ -20,7 +23,9 @@ const APP_KEYS = [
   'frontendHealthPath',
   'backendHealthPath',
 ] as const;
-const REGISTRY_KEYS = ['schemaVersion', 'apps'] as const;
+const SERVICE_KEYS = ['id', 'title', 'url', 'icon', 'accent'] as const;
+const REGISTRY_V1_KEYS = ['schemaVersion', 'apps'] as const;
+const REGISTRY_V2_KEYS = ['schemaVersion', 'apps', 'services'] as const;
 const APP_ID = /^[a-z][a-z0-9-]*$/;
 const APP_ROUTE = /^\/[a-z0-9][a-z0-9/-]*\/$/;
 const SERVICE_HEALTH_PATH = /^\/[A-Za-z0-9._~/-]*$/;
@@ -113,17 +118,60 @@ function parseApp(value: unknown): IndexApp {
   return app;
 }
 
-export function parseIndexRegistry(value: unknown): readonly IndexApp[] {
-  if (!isObject(value) || !hasExactKeys(value, REGISTRY_KEYS) || value.schemaVersion !== 1) {
-    return invalidRegistry();
-  }
-  if (!Array.isArray(value.apps)) {
-    return invalidRegistry();
-  }
+function hasControlCharacters(value: string): boolean {
+  return Array.from(value).some((character) => character.charCodeAt(0) < 32
+    || (character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159));
+}
 
-  const apps = value.apps.map(parseApp);
-  if (new Set(apps.map((app) => app.id)).size !== apps.length) {
+function isServiceUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || /[\s\\]/u.test(value) || hasControlCharacters(value)) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    const authority = value.split('/')[2];
+    const [hostname, port] = (authority ?? '').split(':');
+    const dnsLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+    if (!hostname || !hostname.split('.').every((label) => dnsLabel.test(label) && !label.startsWith('xn--'))
+      || (port !== undefined && (!/^[1-9]\d*$/.test(port) || Number(port) > 65535))) {
+      return false;
+    }
+    return value.startsWith('https://') && url.protocol === 'https:' && url.hostname.length > 0
+      && url.hostname === hostname
+      && url.username === '' && url.password === '' && !authority?.includes('@')
+      && !value.includes('?') && !value.includes('#');
+  } catch {
+    return false;
+  }
+}
+
+function parseService(value: unknown): IndexService {
+  if (!isObject(value) || !hasExactKeys(value, SERVICE_KEYS)) {
     return invalidRegistry();
   }
-  return apps;
+  const { id, title, url, icon, accent } = value;
+  if (typeof id !== 'string' || !APP_ID.test(id)
+    || typeof title !== 'string' || title.length === 0 || hasControlCharacters(title)
+    || !isServiceUrl(url)
+    || typeof icon !== 'string' || !INDEX_ICON_NAMES.has(icon as PlatformIconName)
+    || typeof accent !== 'string' || !ACCENT.test(accent)) {
+    return invalidRegistry();
+  }
+  return { id, title, url, icon: icon as PlatformIconName, accent: accent as `#${string}` };
+}
+
+export function parseIndexRegistry(value: unknown): IndexRegistry {
+  if (!isObject(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2)
+    || !hasExactKeys(value, value.schemaVersion === 1 ? REGISTRY_V1_KEYS : REGISTRY_V2_KEYS)
+    || !Array.isArray(value.apps)
+    || (value.schemaVersion === 2 && !Array.isArray(value.services))) {
+    return invalidRegistry();
+  }
+  const apps = value.apps.map(parseApp);
+  const services = value.schemaVersion === 2 ? (value.services as unknown[]).map(parseService) : [];
+  const ids = [...apps, ...services].map((item) => item.id);
+  if (new Set(ids).size !== ids.length) {
+    return invalidRegistry();
+  }
+  return { apps, services };
 }

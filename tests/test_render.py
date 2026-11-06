@@ -121,7 +121,7 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(
             hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
-            "3b58e5ae1ff942b154fc1b5c06a77efa274e3682b841a73498e1c07dcb4c0f42",
+            "477dce1f2d7c3458179927d3486c7343fd20107c026e4f84ed83fde598f7f4e1",
         )
 
     @caddy_integration
@@ -247,6 +247,9 @@ class RenderTests(unittest.TestCase):
         )
 
         self.assertIn(registry_handler, rendered)
+        v2_handler = registry_handler.replace('registry-v1.json', 'registry-v2.json')
+        self.assertIn(v2_handler, rendered)
+        self.assertLess(rendered.index(v2_handler), rendered.index(assets_handler))
         self.assertIn(assets_handler, rendered)
         self.assertIn("        handle_path /plotter/* {", rendered)
         self.assertIn("        handle_path /samplebeta/* {", rendered)

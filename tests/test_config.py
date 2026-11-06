@@ -1473,7 +1473,7 @@ class ConfigTests(unittest.TestCase):
             "apps": [],
         }
 
-        for value in (0, 3, "1", True):
+        for value in (0, 4, "1", True):
             with self.subTest(schemaVersion=value):
                 payload = deepcopy(valid)
                 payload["schemaVersion"] = value

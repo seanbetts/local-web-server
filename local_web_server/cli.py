@@ -167,6 +167,11 @@ def build_parser(*, _bounded_errors: bool = False) -> argparse.ArgumentParser:
     host_init = host_commands.add_parser("init")
     host_init.add_argument("--from", dest="source", type=Path, required=True)
     host_init.add_argument("--apply", action="store_true")
+    host_configure = host_commands.add_parser("configure")
+    host_configure.add_argument("--from", dest="source", type=Path, required=True)
+    host_configure.add_argument("--apply", action="store_true")
+    host_configure.add_argument("--expected-revision")
+    host_configure.add_argument("--expected-profile-sha256")
     host_migrate = host_commands.add_parser("migrate-registry")
     host_migrate.add_argument("--platform-repository", type=Path)
     host_migrate.add_argument("--apply", action="store_true")
@@ -375,6 +380,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(result.message)
             return 0
         if args.command == "theme":
+            if registry.target.kind != "macos":
+                raise ValueError("NAS theme rollback requires the NAS lifecycle; macOS fallback is disabled")
             from .theme import ThemeStore
 
             digest = ThemeStore(registry.runtime_root).rollback()
@@ -440,6 +447,11 @@ def _run_host(args: argparse.Namespace) -> int:
     else:
         if args.host_command == "init":
             plan = commands.preview_init(args.source)
+        elif args.host_command == "configure":
+            plan = commands.preview_configuration(args.source)
+            if args.apply and (args.expected_revision != plan.revision_id
+                    or args.expected_profile_sha256 != plan.profile_sha256):
+                raise HostCommandError("configuration apply requires matching preview revision and profile digest")
         elif args.host_command == "migrate-registry":
             plan = commands.preview_migration()
         elif args.host_command == "restore":

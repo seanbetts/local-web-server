@@ -136,6 +136,8 @@ class DeploymentManager:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
+        if registry.target.kind != 'macos':
+            raise ValueError('NAS deployment requires the NAS publisher; macOS fallback is disabled')
         self.registry = registry
         self.builder = builder or Builder()
         self.services = services or LaunchctlServiceController()

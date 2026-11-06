@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class IconCatalogueTests(unittest.TestCase):
+    def test_nas_service_icons_are_available_to_manifest_consumers(self):
+        for name in ("server", "video", "download", "search", "radar", "device-tv", "music"):
+            with self.subTest(name=name):
+                self.assertEqual(canonical_manifest_icon(name), name)
+                self.assertTrue(ICON_PATHS[name].startswith("<path "))
+
     def test_catalogue_geometry_is_safe_and_generated_file_is_current(self):
         for name, fragments in ICON_PATHS.items():
             with self.subTest(name=name):

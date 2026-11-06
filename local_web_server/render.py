@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .health import remote_backend_health_path
-from .index_registry import INDEX_ASSET_ROUTE, INDEX_REGISTRY_ROUTE
+from .index_registry import INDEX_ASSET_ROUTE, INDEX_REGISTRY_ROUTE, INDEX_REGISTRY_V2_ROUTE
 from .models import AppManifest, HostApp, HostRegistry
 from .public_origin import TAILSCALE_CADDY_PORT, TAILSCALE_SERVE, TRUSTED_LAN
 from .runtime import RuntimeLayout
@@ -178,7 +178,14 @@ def render_caddyfile(
     lines.extend(
         (
             f"    handle {INDEX_REGISTRY_ROUTE} {{",
-            f"        rewrite * /registry-v1.json",
+            "        rewrite * /registry-v1.json",
+            f"        root * {_quoted_path(index_root)}",
+            '        header Cache-Control "no-cache"',
+            '        header X-Content-Type-Options "nosniff"',
+            "        file_server",
+            "    }",
+            f"    handle {INDEX_REGISTRY_V2_ROUTE} {{",
+            "        rewrite * /registry-v2.json",
             f"        root * {_quoted_path(index_root)}",
             '        header Cache-Control "no-cache"',
             '        header X-Content-Type-Options "nosniff"',

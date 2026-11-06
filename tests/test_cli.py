@@ -1824,6 +1824,7 @@ class CliTests(unittest.TestCase):
     @patch("local_web_server.theme.ThemeStore")
     def test_theme_rollback_prints_only_the_restored_digest(self, store, load_registry):
         load_registry.return_value.runtime_root = Path("/runtime")
+        load_registry.return_value.target.kind = "macos"
         digest = "a" * 64
         store.return_value.rollback.return_value = digest
 

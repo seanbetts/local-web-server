@@ -127,6 +127,9 @@ class AppActivator:
 
     def preview(self, repository: Path) -> AppActivationPlan:
         try:
+            registry = load_registry(self.registry_path)
+            if registry.target.kind != "macos":
+                raise AppActivationError("NAS activation requires the NAS lifecycle; macOS fallback is disabled")
             require_committed_installation_sources(
                 self.platform_repository, require_main=False
             )
@@ -134,7 +137,6 @@ class AppActivator:
             if not app_repository.is_dir():
                 raise OSError
             manifest = load_manifest(app_repository / "local-web.json")
-            registry = load_registry(self.registry_path)
             port = None
             if manifest.kind == "service":
                 matching = [

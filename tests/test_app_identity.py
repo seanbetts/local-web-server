@@ -30,6 +30,19 @@ class AppIdentityCatalogueTests(unittest.TestCase):
         self.assertEqual(kitchen.source, "tools-kitchen-2")
         self.assertIn("meal", kitchen.keywords)
 
+    def test_nas_services_have_discoverable_semantic_identities(self):
+        for query, expected in (
+            ("nas", "server"),
+            ("jellyfin", "video"),
+            ("qbittorrent", "download"),
+            ("prowlarr", "search"),
+            ("radarr", "radar"),
+            ("sonarr", "device-tv"),
+            ("slskd", "music"),
+        ):
+            with self.subTest(query=query):
+                self.assertIn(expected, [icon.name for icon in self.catalogue.discover(query, ()).icons])
+
     def test_unfiltered_report_keeps_reserved_icons_visibly_separate(self):
         report = self.catalogue.discover(None, ())
 

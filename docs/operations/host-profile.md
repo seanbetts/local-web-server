@@ -57,6 +57,45 @@ transition executed by another framework checkout. An exact-equal retry is
 idempotent. If an earlier migration initialized the profile but missed its
 backup, the retry creates/revalidates the backup without another revision.
 
+### Configure a complete schema-3 profile
+
+Prepare a private mode-`0600` registry file containing the complete schema-3
+profile, including its explicit `target` and service links. Preview does not
+write any profile, revision or backup:
+
+```sh
+bin/local-web host configure --from /path/to/prepared-registry.json
+```
+
+Service links require HTTPS with a lowercase ASCII DNS hostname or canonical IPv4
+address. Encoded international hostnames, credentials, query strings, fragments
+and control characters are unsupported. Each link has a unique ID, title,
+semantic icon and six-digit uppercase hex accent; IDs cannot overlap managed apps.
+
+Review that file and the bounded preview. The preview reports `revisionId` for
+the current profile, `profileSha256` for the candidate, and `runtimeRootChanged`
+without exposing private runtime paths. Apply requires both preview values:
+
+```sh
+bin/local-web host configure --from /path/to/prepared-registry.json \
+  --apply --expected-revision REVIEWED_REVISION_ID \
+  --expected-profile-sha256 REVIEWED_CANDIDATE_SHA256
+```
+
+Configuration requires an existing healthy profile/history. It preserves the
+effective public origin, ingress mode and complete managed-app records. It may
+upgrade schema 1/2 to schema 3, change the explicit target and service links, or
+change the runtime root. Invalid/unknown targets and stale preview values fail
+closed. The source has the same bounded safe-file requirements as `host init`.
+
+Apply revalidates the exact source and current chain, creates and verifies a
+backup of the previous state, and appends one `profile-configuration` revision
+through the existing recoverable transaction. Existing history remains intact;
+exact-equal configuration is a no-op. This only updates the private control
+plane: it does not install a target, run services, move data, switch DNS, activate
+apps or deploy. Those operations retain their separate review gates. The legacy
+`host migrate-registry` command retains its byte-identical migration semantics.
+
 ### Inspect state
 
 ```sh

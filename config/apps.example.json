@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "publicOrigin": "https://local.example.ts.net",
   "ingressMode": "tailscale-serve",
   "runtimeRoot": "/Users/example/Coding/runtime",
@@ -25,6 +25,60 @@
         "--port",
         "43123"
       ]
+    }
+  ],
+  "target": {
+    "kind": "macos"
+  },
+  "services": [
+    {
+      "id": "nas-admin",
+      "title": "NAS Administration",
+      "url": "https://local.example.ts.net:8443",
+      "icon": "server",
+      "accent": "#75A7FF"
+    },
+    {
+      "id": "jellyfin",
+      "title": "Jellyfin",
+      "url": "https://local.example.ts.net:8444",
+      "icon": "video",
+      "accent": "#75A7FF"
+    },
+    {
+      "id": "qbittorrent",
+      "title": "qBittorrent",
+      "url": "https://local.example.ts.net:8080",
+      "icon": "download",
+      "accent": "#75A7FF"
+    },
+    {
+      "id": "prowlarr",
+      "title": "Prowlarr",
+      "url": "https://local.example.ts.net:9696",
+      "icon": "search",
+      "accent": "#75A7FF"
+    },
+    {
+      "id": "radarr",
+      "title": "Radarr",
+      "url": "https://local.example.ts.net:7878",
+      "icon": "radar",
+      "accent": "#75A7FF"
+    },
+    {
+      "id": "sonarr",
+      "title": "Sonarr",
+      "url": "https://local.example.ts.net:8989",
+      "icon": "device-tv",
+      "accent": "#75A7FF"
+    },
+    {
+      "id": "slskd",
+      "title": "slskd",
+      "url": "https://local.example.ts.net:5030",
+      "icon": "music",
+      "accent": "#75A7FF"
     }
   ]
 }

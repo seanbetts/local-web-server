@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .icons import canonical_manifest_icon
+from .nas_models import ExternalServiceLink, NasTarget
 from .models import (
     AppManifest,
     BackendProbeSpec,
@@ -118,8 +119,8 @@ def _schema_version(value: Any, context: str) -> int:
 
 
 def _registry_schema_version(value: Any) -> int:
-    if type(value) is not int or value not in (1, 2):
-        raise ConfigError("registry.schemaVersion must be 1 or 2")
+    if type(value) is not int or value not in (1, 2, 3):
+        raise ConfigError("registry.schemaVersion must be 1, 2 or 3")
     return value
 
 
@@ -860,6 +861,84 @@ def _parse_host_app(value: Any) -> HostApp:
     )
 
 
+def _parse_target(value: Any) -> NasTarget:
+    target = _object(value, "registry.target")
+    kind = target.get("kind")
+    if kind == "macos":
+        _reject_unknown_keys(target, {"kind"}, "registry.target")
+        return NasTarget()
+    if kind != "nas-docker":
+        raise ConfigError("registry.target.kind must be macos or nas-docker")
+    fields = {"kind", "adapterCommand", "networkSubnet", "proxyAddress"}
+    _reject_unknown_keys(target, fields, "registry.target")
+    _require_keys(target, fields, "registry.target")
+    adapter = _command(target["adapterCommand"], "registry.target.adapterCommand").argv
+    if not Path(adapter[0]).is_absolute() or any(
+        any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in argument)
+        for argument in adapter
+    ):
+        raise ConfigError("NAS adapter requires an absolute executable and valid arguments")
+    try:
+        if type(target["networkSubnet"]) is not str or type(target["proxyAddress"]) is not str:
+            raise ValueError
+        network = ipaddress.IPv4Network(target["networkSubnet"], strict=True)
+        address = ipaddress.IPv4Address(target["proxyAddress"])
+        private = tuple(ipaddress.IPv4Network(block) for block in
+                        ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+        if (not any(network.subnet_of(block) for block in private)
+                or network.prefixlen > 30 or address not in network
+                or address in (network.network_address, network.broadcast_address)):
+            raise ValueError
+    except (ValueError, TypeError) as error:
+        raise ConfigError("NAS target requires a private IPv4 subnet and usable proxy address") from error
+    return NasTarget(kind, adapter, str(network), str(address))
+
+
+def _parse_service_link(value: Any) -> ExternalServiceLink:
+    link = _object(value, "registry.services[]")
+    fields = {"id", "title", "url", "icon", "accent"}
+    _reject_unknown_keys(link, fields, "registry.services[]")
+    _require_keys(link, fields, "registry.services[]")
+    identifier = _app_id(link["id"], "service.id")
+    title = _string(link["title"], "service.title")
+    if any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in title):
+        raise ConfigError("service.title is invalid")
+    url = _string(link["url"], "service.url")
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.query or parsed.fragment
+                or any(character in url for character in ("\\", "?", "#"))
+                or any(character.isspace() or ord(character) < 32 or 127 <= ord(character) <= 159
+                       for character in url)
+                or parsed.hostname != parsed.hostname.lower() or parsed.port == 0
+                or not all(_DNS_LABEL.fullmatch(label) for label in parsed.hostname.split("."))
+                or any(label.startswith('xn--') for label in parsed.hostname.split('.'))
+                or "%" in parsed.netloc or parsed.netloc != parsed.netloc.lower()
+                or not url.startswith("https://")):
+            raise ValueError
+        if ":" in parsed.netloc:
+            raw_port = parsed.netloc.rsplit(":", 1)[1]
+            if not raw_port.isascii() or not raw_port.isdecimal() or raw_port != str(parsed.port):
+                raise ValueError
+        # WHATWG URLs reinterpret numeric final DNS labels as IPv4. Accept only
+        # the canonical dotted address, so Python and the browser agree.
+        last = parsed.hostname.rsplit(".", 1)[-1]
+        if last.isdecimal() or re.fullmatch(r"0x[0-9a-f]+", last):
+            if str(ipaddress.IPv4Address(parsed.hostname)) != parsed.hostname:
+                raise ValueError
+    except (ValueError, TypeError) as error:
+        raise ConfigError("service.url must be a credential-free HTTPS URL without query or fragment") from error
+    try:
+        icon = canonical_manifest_icon(_string(link["icon"], "service.icon"))
+    except ValueError as error:
+        raise ConfigError("service.icon is invalid") from error
+    accent = _string(link["accent"], "service.accent")
+    if not _HOME_ACCENT.fullmatch(accent):
+        raise ConfigError("service.accent is invalid")
+    return ExternalServiceLink(identifier, title, url, icon, accent)
+
+
 def load_registry(path: Path) -> HostRegistry:
     """Load and normalize a non-secret host registry from *path*."""
     registry = _read_object(path, "registry")
@@ -869,10 +948,20 @@ def load_registry(path: Path) -> HostRegistry:
     _require_keys(registry, {"schemaVersion"}, "registry")
     schema_version = _registry_schema_version(registry["schemaVersion"])
 
-    if schema_version == 1:
+    target=NasTarget();services=()
+    if schema_version==3:
+        _require_keys(registry,{'target'},'registry')
+        target=_parse_target(registry['target'])
+        raw_services=registry.get('services',[])
+        if not isinstance(raw_services,list):raise ConfigError('registry.services must be a list')
+        services=tuple(_parse_service_link(link) for link in raw_services)
+    extension={'target','services'} if schema_version==3 else set()
+    trusted_lan=schema_version==1 or (schema_version==3 and registry.get('ingressMode')==TRUSTED_LAN)
+    if trusted_lan:
+        if target.kind=='nas-docker':raise ConfigError('NAS target requires tailscale-serve HTTPS')
         _reject_unknown_keys(
             registry,
-            {"schemaVersion", "host", "runtimeRoot", "apps"},
+            {"schemaVersion", "host", "runtimeRoot", "apps"} | extension | ({'ingressMode'} if schema_version==3 else set()),
             "registry",
         )
         _require_keys(
@@ -886,7 +975,7 @@ def load_registry(path: Path) -> HostRegistry:
     else:
         _reject_unknown_keys(
             registry,
-            {"schemaVersion", "publicOrigin", "ingressMode", "runtimeRoot", "apps"},
+            {"schemaVersion", "publicOrigin", "ingressMode", "runtimeRoot", "apps"} | extension,
             "registry",
         )
         _require_keys(
@@ -911,6 +1000,8 @@ def load_registry(path: Path) -> HostRegistry:
     ids = [_app_id(app.get("id"), "app.id") for app in raw_apps]
     if len(set(ids)) != len(ids):
         raise ConfigError("duplicate app id")
+    if len(set(ids+[link.id for link in services]))!=len(ids)+len(services):
+        raise ConfigError('duplicate app or service id')
     apps = tuple(_parse_host_app(app) for app in raw_apps)
     repositories = [app.repository.resolve() for app in apps]
     if len(set(repositories)) != len(repositories):
@@ -927,6 +1018,8 @@ def load_registry(path: Path) -> HostRegistry:
         schema_version=schema_version,
         public_origin=public_origin,
         ingress_mode=ingress_mode,
+        target=target,
+        services=services,
     )
 
 

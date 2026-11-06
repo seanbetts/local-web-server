@@ -17,7 +17,9 @@ from unittest.mock import patch
 from local_web_server.install import InstallError, InstallResult, Installer, _atomic_write
 from local_web_server.ingress import IngressVerificationError, TailscaleServeIngressVerifier
 from local_web_server.agent_skill import AgentSkillInstallResult
-from local_web_server.index_registry import INDEX_REGISTRY_NAME, render_index_registry
+from local_web_server.index_registry import (
+    INDEX_REGISTRY_NAME, INDEX_REGISTRY_V2_NAME, render_index_registry, render_index_registry_v2,
+)
 from local_web_server.theme import ThemeError, ThemeStore
 from local_web_server.models import (
     AppManifest,
@@ -3190,6 +3192,9 @@ class InstallerTests(unittest.TestCase):
         home = self.runtime / "home.html"
         previous = self.runtime / "home.previous.html"
         registry = self.runtime / "platform" / "index" / INDEX_REGISTRY_NAME
+        registry_v2 = registry.with_name(INDEX_REGISTRY_V2_NAME)
+        self.assertEqual(registry_v2.read_bytes(), render_index_registry_v2(self.registry, self.manifests))
+        self.assertLess(writes.index(registry_v2), writes.index(home))
         new_assets = tuple(
             self.runtime / "platform" / "index" / "assets" / name
             for name in ("index-new.css", "index-new.js")
@@ -3216,6 +3221,7 @@ class InstallerTests(unittest.TestCase):
         for sequence, failed_relative in enumerate((
             Path("assets/index-new.js"),
             Path(INDEX_REGISTRY_NAME),
+            Path(INDEX_REGISTRY_V2_NAME),
         )):
             with self.subTest(failed_relative=failed_relative):
                 self.installer().install()

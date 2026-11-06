@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from .nas_models import ExternalServiceLink, NasTarget
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,8 @@ class HostRegistry:
     schema_version: int = 1
     public_origin: str = ""
     ingress_mode: str = "trusted-lan"
+    target: NasTarget = field(default_factory=NasTarget)
+    services: tuple[ExternalServiceLink, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.public_origin:

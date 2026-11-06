@@ -9,7 +9,7 @@ import {
   StatusDot,
 } from '@local-web/ui';
 
-import type { IndexApp } from './registry';
+import type { IndexApp, IndexService } from './registry';
 import { parseIndexRegistry } from './registry';
 import {
   createStatusController,
@@ -18,12 +18,12 @@ import {
 } from './statusController';
 import './styles.css';
 
-const INDEX_REGISTRY_ROUTE = '/_local-web/platform/index/registry-v1.json';
+const INDEX_REGISTRY_ROUTE = '/_local-web/platform/index/registry-v2.json';
 const APP_TITLE_COLLATOR = new Intl.Collator('en-GB', { sensitivity: 'base' });
 
 type IndexState =
   | { kind: 'loading' }
-  | { kind: 'ready'; apps: readonly IndexApp[] }
+  | { kind: 'ready'; apps: readonly IndexApp[]; services: readonly IndexService[] }
   | { kind: 'error' };
 
 type StatusPresentation = {
@@ -65,7 +65,7 @@ function cardStyle(accent: string): CSSProperties {
   return { '--system-index-accent': accent } as CSSProperties;
 }
 
-function sortAppsForDisplay(apps: readonly IndexApp[]): readonly IndexApp[] {
+function sortForDisplay<T extends { id: string; title: string }>(apps: readonly T[]): readonly T[] {
   return [...apps].sort((left, right) => {
     const titleOrder = APP_TITLE_COLLATOR.compare(left.title, right.title);
     if (titleOrder !== 0) {
@@ -99,7 +99,23 @@ function SystemIndexCard({ app, index, status }: {
       </div>
       <div className="system-index-card__body">
         <Icon className="system-index-card__icon" name={app.icon} />
-        <h2 className="system-index-card__title">{app.title}</h2>
+        <h3 className="system-index-card__title">{app.title}</h3>
+      </div>
+    </a>
+  );
+}
+
+function SystemIndexServiceCard({ service, index }: { service: IndexService; index: number }) {
+  return (
+    <a className="system-index-card" href={service.url}
+      aria-label={`Open ${service.title} (external service)`} style={cardStyle(service.accent)}>
+      <div className="system-index-card__meta">
+        <span className="system-index-card__number">{String(index + 1).padStart(2, '0')}</span>
+        <span className="system-index-card__external">External service <span aria-hidden="true">↗</span></span>
+      </div>
+      <div className="system-index-card__body">
+        <Icon className="system-index-card__icon" name={service.icon} />
+        <h3 className="system-index-card__title">{service.title}</h3>
       </div>
     </a>
   );
@@ -119,12 +135,12 @@ export function SystemIndex() {
         if (!response.ok) {
           throw new Error('Registry request failed');
         }
-        const apps = parseIndexRegistry(await response.json());
+        const { apps, services } = parseIndexRegistry(await response.json());
         if (!active) {
           return;
         }
         setStatuses(Object.fromEntries(apps.map((app) => [app.id, 'checking'] as const)));
-        setState({ kind: 'ready', apps: sortAppsForDisplay(apps) });
+        setState({ kind: 'ready', apps: sortForDisplay(apps), services: sortForDisplay(services) });
         stop = createStatusController(browserStatusEnvironment(), apps, (appId, status) => {
           if (active) {
             setStatuses((current) => ({ ...current, [appId]: status }));
@@ -167,16 +183,29 @@ export function SystemIndex() {
       {state.kind === 'ready' ? (
         <section className="system-index" aria-label="System Index">
           <h1 className="system-index__visually-hidden">System Index</h1>
-          <div className="system-index__grid">
-            {state.apps.map((app, index) => (
-              <SystemIndexCard
-                key={app.id}
-                app={app}
-                index={index}
-                status={statuses[app.id] ?? 'checking'}
-              />
-            ))}
-          </div>
+          <section className="system-index__section" aria-labelledby="local-web-apps-heading">
+            <h2 id="local-web-apps-heading" className="system-index__section-title">Local Web apps</h2>
+            <div className="system-index__grid">
+              {state.apps.map((app, index) => (
+                <SystemIndexCard
+                  key={app.id}
+                  app={app}
+                  index={index}
+                  status={statuses[app.id] ?? 'checking'}
+                />
+              ))}
+            </div>
+          </section>
+          {state.services.length > 0 ? (
+            <section className="system-index__section" aria-labelledby="nas-services-heading">
+              <h2 id="nas-services-heading" className="system-index__section-title">NAS services</h2>
+              <div className="system-index__grid">
+                {state.services.map((service, index) => (
+                  <SystemIndexServiceCard key={service.id} service={service} index={index} />
+                ))}
+              </div>
+            </section>
+          ) : null}
         </section>
       ) : null}
     </PlatformShell>

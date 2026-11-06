@@ -32,10 +32,10 @@ function invalidRegistry(value: unknown) {
 
 describe('parseIndexRegistry', () => {
   it('returns the public apps in registry order', () => {
-    expect(parseIndexRegistry(registry)).toEqual(registry.apps);
+    expect(parseIndexRegistry(registry)).toEqual({ apps: registry.apps, services: [] });
   });
 
-  it('requires schema version 1 and an apps array', () => {
+  it('requires a supported schema version and an apps array', () => {
     invalidRegistry({ schemaVersion: 2, apps: [] });
     invalidRegistry({ schemaVersion: 1, apps: {} });
   });
@@ -50,11 +50,11 @@ describe('parseIndexRegistry', () => {
     expect(parseIndexRegistry({
       schemaVersion: 1,
       apps: [{ ...registry.apps[0], id: 'movement', icon: 'stretching', backendHealthPath: null }],
-    })[0].icon).toBe('stretching');
+    }).apps[0].icon).toBe('stretching');
     expect(parseIndexRegistry({
       schemaVersion: 1,
       apps: [{ ...registry.apps[0], id: 'careers', icon: 'briefcase', backendHealthPath: null }],
-    })[0].icon).toBe('briefcase');
+    }).apps[0].icon).toBe('briefcase');
     expect(parseIndexRegistry({
       schemaVersion: 1,
       apps: [{
@@ -63,7 +63,7 @@ describe('parseIndexRegistry', () => {
         icon: 'tools-kitchen-2',
         backendHealthPath: null,
       }],
-    })[0].icon).toBe('tools-kitchen-2');
+    }).apps[0].icon).toBe('tools-kitchen-2');
     invalidRegistry({
       schemaVersion: 1,
       apps: [{ ...registry.apps[0], route: 'https://example.test/plotter/' }],
@@ -103,7 +103,7 @@ describe('parseIndexRegistry', () => {
       ],
     };
 
-    expect(parseIndexRegistry(producerCompatibleRegistry)).toEqual(producerCompatibleRegistry.apps);
+    expect(parseIndexRegistry(producerCompatibleRegistry)).toEqual({ apps: producerCompatibleRegistry.apps, services: [] });
   });
 
   it('rejects traversal, authorities, invalid encoding, and control characters in canonical paths', () => {
@@ -136,5 +136,50 @@ describe('parseIndexRegistry', () => {
       return;
     }
     throw new Error('Expected invalid registry to throw');
+  });
+});
+
+const service = {
+  id: 'jellyfin', title: 'Jellyfin', url: 'https://local.example.ts.net:8444',
+  icon: 'photo', accent: '#75A7FF',
+};
+const v2 = { schemaVersion: 2, apps: registry.apps, services: [service] };
+
+describe('schema 2 service links', () => {
+  it('preserves service URLs and keeps services separate from managed apps', () => {
+    expect(parseIndexRegistry(v2)).toEqual({ apps: registry.apps, services: [service] });
+    expect(parseIndexRegistry({ ...v2, apps: [], services: [] })).toEqual({ apps: [], services: [] });
+  });
+
+  it('rejects duplicate IDs within services and across both collections', () => {
+    invalidRegistry({ ...v2, services: [service, service] });
+    invalidRegistry({ ...v2, services: [{ ...service, id: registry.apps[0].id }] });
+  });
+
+  it('requires exact public service fields and canonical metadata', () => {
+    for (const invalid of [
+      { ...service, backendHealthPath: '/healthz' }, { ...service, privateValue: 'private' },
+      { ...service, id: 'Jellyfin' }, { ...service, title: '' },
+      { ...service, title: 'Jellyfin\u0080' }, { ...service, title: 'Jellyfin\n' },
+      { ...service, icon: 'car' }, { ...service, accent: '#75a7ff' },
+    ]) invalidRegistry({ ...v2, services: [invalid] });
+    invalidRegistry({ schemaVersion: 2, apps: [] });
+    invalidRegistry({ ...v2, services: {} });
+  });
+
+  it('rejects non-HTTPS, credentials, whitespace, controls and malformed service URLs', () => {
+    for (const url of [
+      'http://local.example.ts.net:8444', '//local.example.ts.net:8444',
+      'https://user:secret@local.example.ts.net:8444', 'https://@local.example.ts.net',
+      ' https://local.example.ts.net', 'https://local.example.ts.net/path with space',
+      'https://local.example.ts.net/\\path', 'https://local.example.ts.net/\u0000',
+      'https://local.example.ts.net/\n', 'https://', 'javascript:alert(1)', 'https://local.example.ts.net/?token=secret',
+      'https://local.example.ts.net/#fragment', 'https://LOCAL.example.test:8444',
+      'https://%6cocal.example.test:8444', 'https://local_example.test:8444',
+      'https://local.example.ts.net.:8444', 'https://local.example.ts.net:0',
+      'https://local.example.ts.net:65536', 'https://local.example.ts.net:',
+      'https://local.example.ts.net:08444', 'https://0x7f.1', 'https://example.123', 'https://999.999.999.999', 'https://[::1]:8444',
+      'https://xn--a', 'https://xn--abc', 'https://xn--bcher-kva.example',
+    ]) invalidRegistry({ ...v2, services: [{ ...service, url }] });
   });
 });
