@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import signal
 import stat
 import subprocess
 import tempfile
@@ -29,6 +30,39 @@ class GitRunnerTests(unittest.TestCase):
         executable.write_text("#!/bin/sh\n" + source, encoding="utf-8")
         executable.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         return executable
+
+    def _ready_fixture_popen(self, *markers: str, leader_exited: bool = False):
+        real_popen = subprocess.Popen
+
+        def start(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            try:
+                # macOS can delay the first instruction of a new script. The
+                # runner's timeout must exercise a running fixture, not startup.
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    ready = all(
+                        (self.repository / marker).is_file()
+                        and (self.repository / marker).read_text(encoding="ascii").strip().isdigit()
+                        for marker in markers
+                    )
+                    if ready and (not leader_exited or process.poll() is not None):
+                        self.fixture_ready_at = time.monotonic()
+                        return process
+                    time.sleep(0.01)
+                self.fail("Git timeout fixture did not become ready")
+            except BaseException:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=2)
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+                raise
+
+        return start
 
     @staticmethod
     def _wait_for_process_exit(pid: int, timeout: float = 2.0) -> bool:
@@ -74,15 +108,15 @@ class GitRunnerTests(unittest.TestCase):
             "echo $$ > runner.pid\n"
             "sleep 30\n"
         )
-        started = time.monotonic()
         with (
+            patch("local_web_server.git_runner.subprocess.Popen", self._ready_fixture_popen("runner.pid")),
             patch("local_web_server.git_runner._GIT_CANDIDATES", (executable,)),
             patch("local_web_server.git_runner._GIT_TIMEOUT_SECONDS", 0.5),
             self.assertRaises(GitRunnerError),
         ):
             run_git(self.repository, ("status",), maximum_stdout=16)
 
-        self.assertLess(time.monotonic() - started, 3)
+        self.assertLess(time.monotonic() - self.fixture_ready_at, 3)
         pid = int((self.repository / "runner.pid").read_text(encoding="ascii"))
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
@@ -97,12 +131,16 @@ class GitRunnerTests(unittest.TestCase):
         child_pid = None
         try:
             with (
+                patch("local_web_server.git_runner.subprocess.Popen", self._ready_fixture_popen(
+                    "runner.pid", "descendant.pid", leader_exited=True,
+                )),
                 patch("local_web_server.git_runner._GIT_CANDIDATES", (executable,)),
                 patch("local_web_server.git_runner._GIT_TIMEOUT_SECONDS", 0.5),
                 self.assertRaises(GitRunnerError),
             ):
                 run_git(self.repository, ("status",), maximum_stdout=16)
 
+            self.assertLess(time.monotonic() - self.fixture_ready_at, 3)
             child_pid = int(
                 (self.repository / "descendant.pid").read_text(encoding="ascii")
             )
