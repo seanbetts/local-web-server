@@ -40,6 +40,23 @@ class DataTargetTests(unittest.TestCase):
         with self.assertRaises(DataTargetError):
             data_target_for_repository(replace(lan, target=NasTarget(kind='nas-docker')), self.snapshot, self.repository)
 
+    def test_nas_service_data_target_does_not_require_a_mac_start_command(self):
+        path = self.repository / 'local-web.json'
+        manifest = json.loads(path.read_text())
+        manifest.update(kind='service', healthPath='/example/healthz',
+                        service=dict(module='service', internalHealthPath='/healthz'))
+        path.write_text(json.dumps(manifest))
+        import subprocess
+        subprocess.run(['git', '-C', str(self.repository), 'add', 'local-web.json'], check=True)
+        subprocess.run(['git', '-C', str(self.repository), 'commit', '-qm', 'service fixture'], check=True)
+        host = replace(self.registry.apps[0], port=43123)
+        registry = replace(self.registry, target=NasTarget(kind='nas-docker'), apps=(host,))
+        result = data_target_for_repository(registry, self.snapshot, self.repository)
+        self.assertEqual(result['targetKind'], 'nas-docker')
+        self.assertEqual(result['baseUrl'], 'https://local.example.ts.net/example')
+        with self.assertRaises(DataTargetError):
+            data_target_for_repository(replace(registry, target=NasTarget(kind='macos')), self.snapshot, self.repository)
+
     def test_unregistered_or_unhealthy_profile_never_supplies_a_local_fallback(self):
         other = self.root/'other'; other.mkdir()
         for registry, snapshot, repository in ((self.registry, self.snapshot, other),

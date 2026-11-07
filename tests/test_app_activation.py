@@ -312,6 +312,33 @@ class AppActivationTests(unittest.TestCase):
         self.assertEqual(installation.calls, [])
         self.assertEqual(deployer.calls, [])
 
+    def test_nas_existing_service_port_does_not_require_mac_start_command(self):
+        self.make_service()
+        self.make_nas(production=False)
+        manifest_path = self.app / 'local-web.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['production'] = dict(recipeVersion='1', dataContract='fixture-v1', rollbackPolicy='compatible',
+            nativeDependencies=None, buildCommands=[['true']], runtime=dict(
+                baseImage='python@sha256:'+'b'*64, abi='python314', lockfiles=['requirements.lock'],
+                dockerfile='Dockerfile.runtime', command=['python3', '-m', 'service'],
+                cpuLimit=1, memoryLimitMib=256, secretFiles=[], healthRuntime='python3'))
+        manifest_path.write_text(json.dumps(manifest))
+        payload = json.loads(self.registry.read_text())
+        payload['apps'] = [dict(id='recipe-notebook', repository=str(self.app), autoDeploy=True,
+            environment=dict(VITE_PUBLIC_BASE_PATH='/recipe-notebook/'), port=43123)]
+        self.profile_store.publish_configuration(self.registry.read_bytes(), json.dumps(payload).encode())
+        activator, installation, deployer = self.activator()
+        original = self.registry.read_bytes()
+        registration = AppRegistrationPlan('recipe-notebook', '/recipe-notebook', 'service', 43123,
+            self.registry, False, original, original)
+        with patch.object(activator.registrar, 'plan', return_value=registration) as registrar:
+            plan = activator.preview(self.app)
+        self.assertEqual(plan.port, 43123)
+        registrar.assert_called_once_with(self.app.resolve(), self.registry, port=43123)
+        self.assertEqual(self.registry.read_bytes(), original)
+        self.assertEqual(installation.calls, [])
+        self.assertEqual(deployer.calls, [])
+
     def test_nas_default_deployer_dispatch_has_no_mac_fallback(self):
         self.make_nas()
         activator = AppActivator(platform_repository=self.platform)

@@ -294,7 +294,7 @@ class NasHostDeploymentManager:
             if observed.descriptor is None or observed.observed_healthy is not True:
                 return False
             repository = self.repository_factory(host.repository)
-            _, manifest = validate_registered_app(host, repository.manifest_at(observed.descriptor.source_commit))
+            _, manifest = validate_registered_app(host, repository.manifest_at(observed.descriptor.source_commit), target_kind="nas-docker")
             paths = [frontend_health_path(manifest)]
             backend = backend_health_path(host, manifest)
             if backend is not None:
@@ -348,7 +348,7 @@ class NasHostDeploymentManager:
                 raise NasRecoveryRequired(app_id,pending['operationId'])
             if expected_commit is not None and commit != expected_commit:
                 raise ValueError('deployment target changed')
-            host, manifest = validate_registered_app(host, repository.manifest_at(commit))
+            host, manifest = validate_registered_app(host, repository.manifest_at(commit), target_kind="nas-docker")
             recipe = require_nas_recipe(manifest.production, kind=manifest.kind)
             if recipe.rollback_policy != 'compatible':
                 raise ValueError('app migration requires its reviewed data recovery procedure')
@@ -460,7 +460,7 @@ class NasStatusCollector:
             main = repository.main_commit()
             observed = _observe(self.transport, host.id)
             deployed = observed.descriptor.source_commit if observed.descriptor else None
-            _, manifest = validate_registered_app(host, repository.manifest_at(deployed or main))
+            _, manifest = validate_registered_app(host, repository.manifest_at(deployed or main), target_kind="nas-docker")
             frontend = self.health.check(join_public_origin(self.registry.public_origin, frontend_health_path(manifest)))
             backend_path = backend_health_path(host, manifest)
             backend = self.health.check(join_public_origin(self.registry.public_origin, backend_path)) if backend_path else None

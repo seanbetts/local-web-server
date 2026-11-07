@@ -118,7 +118,7 @@ def load_main_manifests(
         for host in registry.apps:
             repository = repository_factory(host.repository)
             commit = repository.main_commit()
-            _host, manifest = validate_registered_app(host, repository.manifest_at(commit))
+            _host, manifest = validate_registered_app(host, repository.manifest_at(commit), target_kind=registry.target.kind)
             manifests[host.id] = manifest
     except ConfigError:
         raise

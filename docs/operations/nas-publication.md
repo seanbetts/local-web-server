@@ -25,6 +25,11 @@ source branches without publishing them.
 
 ## Publication and status
 
+NAS service host entries require a port; their runtime command comes from the
+app-owned production recipe. A Mac `startCommand` is optional and inert on this
+target. Registration preserves an existing Mac command for later recovery, while
+new NAS registrations do not resolve Mac executables.
+
 The configured host profile chooses the lifecycle. A `nas-docker` profile routes
 ordinary `deploy`, `rollback` and `status` to its fixed NAS adapter. It never
 interprets `runtimeRoot` as a Mac serving directory or falls back to launchd.

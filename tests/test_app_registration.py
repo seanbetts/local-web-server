@@ -77,6 +77,40 @@ class AppRegistrationTests(unittest.TestCase):
         self.doctor = FixedDoctor()
         self.registrar = AppRegistrar(doctor=self.doctor)
 
+    def test_nas_service_registration_uses_container_recipe_without_mac_executable(self):
+        self._write_generated_repository(self.repository, kind="service")
+        path = self.repository / 'local-web.json'
+        manifest = json.loads(path.read_text())
+        manifest['production'] = dict(recipeVersion='1', dataContract='fixture-v1', rollbackPolicy='compatible',
+            nativeDependencies=None, buildCommands=[['true']], runtime=dict(
+                baseImage='python@sha256:'+'b'*64, abi='python314', lockfiles=['requirements.lock'],
+                dockerfile='Dockerfile.runtime', command=['python3', '-m', 'private_service'],
+                cpuLimit=1, memoryLimitMib=256, secretFiles=[], healthRuntime='python3'))
+        path.write_text(json.dumps(manifest))
+        self._commit_changes(self.repository)
+        self.registry_payload.update(schemaVersion=3, publicOrigin='https://local.example.ts.net',
+            ingressMode='tailscale-serve', target=dict(kind='nas-docker', adapterCommand=['/usr/local/bin/adapter'],
+                networkSubnet='172.30.200.0/24', proxyAddress='172.30.200.2'))
+        self.registry_payload.pop('host')
+        peer_path = self.existing_repository / 'local-web.json'
+        peer = json.loads(peer_path.read_text())
+        peer.update(kind='service', healthPath='/existing-app/healthz',
+                    service=dict(module='peer', internalHealthPath='/healthz'))
+        peer_path.write_text(json.dumps(peer))
+        self._commit_changes(self.existing_repository)
+        self.registry_payload['apps'][0]['port'] = 43124
+        self._write_registry(self.registry_payload)
+        with patch.object(self.registrar, '_service_command', side_effect=AssertionError('Mac command resolution')):
+            plan = self.registrar.plan(self.repository, self.registry, port=43123)
+        payload = json.loads(plan.candidate)
+        entry = next(app for app in payload['apps'] if app['id'] == 'recipe-notebook')
+        self.assertEqual(entry['port'], 43123)
+        self.assertNotIn('startCommand', entry)
+        # The unchanged NAS entry is idempotent, including other service peers.
+        self._write_registry(payload)
+        with patch.object(self.registrar, '_service_command', side_effect=AssertionError('Mac command resolution')):
+            self.assertFalse(self.registrar.plan(self.repository, self.registry, port=43123).changed)
+
     def tearDown(self):
         self.temporary.cleanup()
 

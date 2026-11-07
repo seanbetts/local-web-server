@@ -194,7 +194,7 @@ def prepare_nas_platform(
     environment = tuple(sorted(
         (probe_environment_name(host.id, name), value)
         for host in registry.apps if host.backend_probe is not None
-        for name, value in probe_environment(manifests[host.id], host).items()))
+        for name, value in probe_environment(manifests[host.id], host, target_kind="nas-docker").items()))
     compose = render_nas_compose(registry, manifests, runtimes, caddy_image=caddy_image,
                                  tailscale_image=tailscale_image, caddy_environment=environment)
     serve_host = registry.host + ':443'

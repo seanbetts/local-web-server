@@ -54,7 +54,7 @@ class NasReleasePreparer:
 
     def prepare(self, host: HostApp, *, commit: str, destination: Path) -> PreparedNasRelease:
         repository = GitRepository(host.repository)
-        host, manifest = validate_registered_app(host, repository.manifest_at(commit))
+        host, manifest = validate_registered_app(host, repository.manifest_at(commit), target_kind="nas-docker")
         recipe = require_nas_recipe(manifest.production, kind=manifest.kind)
         if recipe.rollback_policy != 'compatible':
             raise ValueError('app migration requires its reviewed data recovery procedure')

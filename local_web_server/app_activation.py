@@ -177,7 +177,7 @@ class AppActivator:
                             )
                         port = self.allocator.select(registry)
                     else:
-                        if host.start_command is None:
+                        if registry.target.kind == 'macos' and host.start_command is None:
                             raise AppActivationError(
                                 "application activation validation failed"
                             )

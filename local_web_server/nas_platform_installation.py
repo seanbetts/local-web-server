@@ -554,9 +554,9 @@ def install_saved_nas_platform(repository,registry,*,dry_run,profile_revision,se
         elif live is not None:commit=live.source_commit
         else:raise ValueError('unselected app has no observed release; prepare its explicit bootstrap installation')
         repository_view=GitRepository(host.repository)
-        _,manifest=validate_registered_app(host,repository_view.manifest_at(commit))
+        _,manifest=validate_registered_app(host,repository_view.manifest_at(commit), target_kind="nas-docker")
         if selected_candidate is not None and host.id==selected_candidate.descriptor.app_id and live is not None:
-            _,previous_manifest=validate_registered_app(host,repository_view.manifest_at(live.source_commit))
+            _,previous_manifest=validate_registered_app(host,repository_view.manifest_at(live.source_commit), target_kind="nas-docker")
             def policy(value):
                 return (value.kind,value.route,value.health_path,
                         value.service.internal_health_path if value.service else None,

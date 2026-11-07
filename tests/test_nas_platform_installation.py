@@ -8,6 +8,9 @@ import unittest
 from unittest.mock import patch
 
 from local_web_server.nas_install import prepare_nas_platform
+from local_web_server.install import load_main_manifests
+from local_web_server.config import ConfigError
+from unittest.mock import Mock
 from local_web_server.nas_render import ContainerRuntimeSpec
 from local_web_server.models import AppManifest, BuildSpec, HostApp, HostRegistry, ServiceSpec
 from local_web_server.nas_models import NasTarget
@@ -54,6 +57,21 @@ class NasPlatformInstallationTests(unittest.TestCase):
                          tailscale_image=TAILSCALE, build=False)
         arguments.update(overrides)
         return prepare_nas_platform(**arguments)
+
+    def test_pinned_nas_service_without_mac_command_prepares_the_platform(self):
+        source = Mock()
+        source.main_commit.return_value = 'a' * 40
+        source.manifest_at.return_value = self.manifests['notes']
+        manifests = load_main_manifests(self.registry, repository_factory=lambda _: source)
+        self.assertEqual(manifests, self.manifests)
+        prepared = self.prepare(manifests=manifests)
+        self.assertIn('compose.yaml', {entry.path for entry in prepared.files})
+        with self.assertRaisesRegex(ConfigError, 'startCommand'):
+            load_main_manifests(replace(self.registry, target=NasTarget('macos')),
+                                repository_factory=lambda _: source)
+        no_port = replace(self.registry, apps=(replace(self.registry.apps[0], port=None),))
+        with self.assertRaisesRegex(ConfigError, 'port'):
+            load_main_manifests(no_port, repository_factory=lambda _: source)
 
     def test_prepares_complete_immutable_platform_descriptor_without_target_writes(self):
         with patch('subprocess.Popen', side_effect=AssertionError('no runtime process')):

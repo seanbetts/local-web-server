@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from local_web_server.models import Command, HostApp
+from local_web_server.models import HostApp
 from local_web_server.native_build import NativePlatformIdentity
 from local_web_server.nas_workflow import NasReleasePreparer
 from local_web_server.release_manifest import ReleaseDescriptorV1, snapshot_files
@@ -117,7 +117,7 @@ class NasReleasePreparationTests(unittest.TestCase):
         subprocess.run(['git', '-C', str(self.repository), 'add', '.'], check=True)
         subprocess.run(['git', '-C', str(self.repository), 'commit', '-qm', 'service fixture'], check=True)
         commit = subprocess.check_output(['git', '-C', str(self.repository), 'rev-parse', 'HEAD'], text=True).strip()
-        host = replace(host, port=43123, start_command=Command(('/usr/bin/true',)))
+        host = replace(host, port=43123, start_command=None)
         calls = []
 
         def install(source, dockerfile, key, archive, base_image):

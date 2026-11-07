@@ -25,7 +25,7 @@ def data_target_for_repository(registry: HostRegistry, snapshot: HostProfileSnap
             raise ValueError
         host = hosts[0]
         source = GitRepository(host.repository)
-        _, manifest = validate_registered_app(host, source.manifest_at(source.main_commit()))
+        _, manifest = validate_registered_app(host, source.manifest_at(source.main_commit()), target_kind=registry.target.kind)
         revision = snapshot.revisions[-1].revision_id
         if type(revision) is not str or not re.fullmatch(r'[0-9a-f]{64}', revision):
             raise ValueError

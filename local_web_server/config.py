@@ -1070,14 +1070,19 @@ def registered_host(registry: HostRegistry, app_id: str) -> HostApp:
     return host
 
 
-def validate_registered_app(host: HostApp, manifest: AppManifest) -> tuple[HostApp, AppManifest]:
+def validate_registered_app(host: HostApp, manifest: AppManifest, *, target_kind: str = "macos") -> tuple[HostApp, AppManifest]:
     """Verify that a pinned manifest and its host entry form a valid app."""
+    if target_kind not in ("macos", "nas-docker"):
+        raise ConfigError("unknown application hosting target")
     if manifest.id != host.id:
         raise ConfigError("registered app id does not match manifest id")
     if manifest.kind == "static" and (host.port is not None or host.start_command is not None):
         raise ConfigError("static host entry cannot declare port or startCommand")
-    if manifest.kind == "service" and (host.port is None or host.start_command is None):
-        raise ConfigError("service host entry requires port and startCommand")
+    if manifest.kind == "service":
+        if host.port is None:
+            raise ConfigError("service host entry requires port and startCommand" if target_kind == "macos" else "NAS service host entry requires port")
+        if target_kind == "macos" and host.start_command is None:
+            raise ConfigError("service host entry requires port and startCommand")
     _validate_backend_probe_declaration(host, manifest)
     _resolved_probe_environment(manifest, host)
     return host, manifest
@@ -1086,7 +1091,7 @@ def validate_registered_app(host: HostApp, manifest: AppManifest) -> tuple[HostA
 def load_registered_app(registry: HostRegistry, app_id: str) -> tuple[HostApp, AppManifest]:
     """Load and verify an app manifest from its current working tree."""
     host = registered_host(registry, app_id)
-    return validate_registered_app(host, load_manifest(host.repository / "local-web.json"))
+    return validate_registered_app(host, load_manifest(host.repository / "local-web.json"), target_kind=registry.target.kind)
 
 
 def _environment_file_values(path: Path, allowed_names: set[str]) -> dict[str, str]:
@@ -1124,7 +1129,7 @@ def build_environment(manifest: AppManifest, host: HostApp, base: Mapping[str, s
     return environment
 
 
-def probe_environment(manifest: AppManifest, host: HostApp) -> dict[str, str]:
+def probe_environment(manifest: AppManifest, host: HostApp, *, target_kind: str = "macos") -> dict[str, str]:
     """Resolve the validated public inputs of a declared remote backend probe."""
-    validate_registered_app(host, manifest)
+    validate_registered_app(host, manifest, target_kind=target_kind)
     return _resolved_probe_environment(manifest, host)

@@ -164,11 +164,16 @@ class AppRegistrar:
             raise AppRegistrationError("static registration cannot declare a port")
         if port is not None and (type(port) is not int or not 1 <= port <= 65535 or port == 80):
             raise AppRegistrationError("service registration port is invalid")
-        start_command = self._service_command(
-            manifest, resolved_repository, registry.runtime_root, port
-        )
+        if registry.target.kind == 'nas-docker':
+            from .nas_recipe import require_nas_recipe
+            require_nas_recipe(manifest.production, kind=manifest.kind)
+            start_command = None
+        else:
+            start_command = self._service_command(
+                manifest, resolved_repository, registry.runtime_root, port
+            )
         matching_index = self._check_conflicts(
-            registry.apps, resolved_repository, manifest.id, manifest.route, port
+            registry.apps, resolved_repository, manifest.id, manifest.route, port, target_kind=registry.target.kind
         )
         entry: dict[str, Any] = {
             "id": manifest.id,
@@ -180,12 +185,15 @@ class AppRegistrar:
             entry["environment"] = {
                 "VITE_PUBLIC_BASE_PATH": expected_public_base_path,
             }
-        if port is not None and start_command is not None:
+        if port is not None:
             entry["port"] = port
-            entry["startCommand"] = list(start_command)
+            if start_command is not None:
+                entry["startCommand"] = list(start_command)
         if matching_index is not None:
             current = registry.apps[matching_index]
             existing = raw_registry["apps"][matching_index]
+            if registry.target.kind == 'nas-docker' and 'startCommand' in existing:
+                entry['startCommand'] = existing['startCommand']
             transitioning_to_service = (
                 manifest.kind == "service"
                 and current.port is None
@@ -238,7 +246,7 @@ class AppRegistrar:
             raise AppRegistrationError("application is not eligible for registration")
 
         matching_index = self._check_conflicts(
-            registry.apps, resolved_repository, manifest.id, manifest.route, None
+            registry.apps, resolved_repository, manifest.id, manifest.route, None, target_kind=registry.target.kind
         )
         if matching_index is None:
             raise AppRegistrationError("application conflicts with host registry")
@@ -253,7 +261,7 @@ class AppRegistrar:
         if command is None:
             raise AppRegistrationError("application is not eligible for registration")
         self._check_conflicts(
-            registry.apps, resolved_repository, manifest.id, manifest.route, port
+            registry.apps, resolved_repository, manifest.id, manifest.route, port, target_kind=registry.target.kind
         )
 
         existing = raw_registry["apps"][matching_index]
@@ -306,7 +314,7 @@ class AppRegistrar:
             raise AppRegistrationError("application is not eligible for registration")
 
         matching_index = self._check_conflicts(
-            registry.apps, resolved_repository, manifest.id, manifest.route, None
+            registry.apps, resolved_repository, manifest.id, manifest.route, None, target_kind=registry.target.kind
         )
         if matching_index is None:
             raise AppRegistrationError("application conflicts with host registry")
@@ -320,7 +328,7 @@ class AppRegistrar:
         if command is None or command != existing_host.start_command.argv:
             raise AppRegistrationError("application conflicts with host registry")
         self._check_conflicts(
-            registry.apps, resolved_repository, manifest.id, manifest.route, port
+            registry.apps, resolved_repository, manifest.id, manifest.route, port, target_kind=registry.target.kind
         )
 
         existing = raw_registry["apps"][matching_index]
@@ -494,6 +502,8 @@ class AppRegistrar:
         app_id: str,
         route: str,
         port: int | None,
+        *,
+        target_kind: str = "macos",
     ) -> int | None:
         resolved_registered: list[Path] = []
         try:
@@ -537,7 +547,7 @@ class AppRegistrar:
                 git_repository = self._repository_factory(app_repository)
                 main_commit = git_repository.main_commit()
                 _host, registered_manifest = validate_registered_app(
-                    app, git_repository.manifest_at(main_commit)
+                    app, git_repository.manifest_at(main_commit), target_kind=target_kind
                 )
                 if registered_manifest.route in registered_routes:
                     raise AppRegistrationError(

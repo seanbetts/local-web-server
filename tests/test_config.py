@@ -925,8 +925,15 @@ class ConfigTests(unittest.TestCase):
             start_command=Command(("python3", "-m", "example_service")),
         )
 
-        with self.assertRaisesRegex(ConfigError, "backendProbe"):
-            validate_registered_app(host, manifest)
+        for target in ('macos', 'nas-docker'):
+            with self.subTest(target=target), self.assertRaisesRegex(ConfigError, "backendProbe"):
+                validate_registered_app(replace(host, start_command=None) if target == 'nas-docker' else host,
+                                        manifest, target_kind=target)
+
+    def test_unknown_registered_target_is_rejected(self):
+        manifest = parse_manifest(json.dumps(self.static_manifest_with_probe_inputs()))
+        with self.assertRaisesRegex(ConfigError, "hosting target"):
+            validate_registered_app(self.host_with_backend_probe(), manifest, target_kind='unknown')
 
     def test_validates_and_resolves_only_declared_remote_probe_inputs(self):
         manifest = parse_manifest(json.dumps(self.static_manifest_with_probe_inputs()))
@@ -940,6 +947,7 @@ class ConfigTests(unittest.TestCase):
 
         validate_registered_app(host, manifest)
         environment = probe_environment(manifest, host)
+        self.assertEqual(probe_environment(manifest, host, target_kind='nas-docker'), environment)
 
         self.assertEqual(set(environment), {"VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY"})
         self.assertTrue(all(environment.values()))
