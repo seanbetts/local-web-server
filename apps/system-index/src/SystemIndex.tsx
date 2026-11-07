@@ -105,18 +105,18 @@ function SystemIndexCard({ app, index, status }: {
   );
 }
 
-function SystemIndexServiceCard({ service, index }: { service: IndexService; index: number }) {
+function SystemIndexServiceButton({ service }: { service: IndexService }) {
   return (
-    <a className="system-index-card" href={service.url}
-      aria-label={`Open ${service.title} (external service)`} style={cardStyle(service.accent)}>
-      <div className="system-index-card__meta">
-        <span className="system-index-card__number">{String(index + 1).padStart(2, '0')}</span>
-        <span className="system-index-card__external">External service <span aria-hidden="true">↗</span></span>
-      </div>
-      <div className="system-index-card__body">
-        <Icon className="system-index-card__icon" name={service.icon} />
-        <h3 className="system-index-card__title">{service.title}</h3>
-      </div>
+    <a
+      className="lwp-button lwp-button--secondary system-index-service"
+      href={service.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Open ${service.title} (opens in a new tab)`}
+      style={cardStyle(service.accent)}
+    >
+      <Icon className="system-index-service__icon" name={service.icon} />
+      <span>{service.title}</span>
     </a>
   );
 }
@@ -199,9 +199,9 @@ export function SystemIndex() {
           {state.services.length > 0 ? (
             <section className="system-index__section" aria-labelledby="nas-services-heading">
               <h2 id="nas-services-heading" className="system-index__section-title">NAS services</h2>
-              <div className="system-index__grid">
-                {state.services.map((service, index) => (
-                  <SystemIndexServiceCard key={service.id} service={service} index={index} />
+              <div className="system-index__services">
+                {state.services.map((service) => (
+                  <SystemIndexServiceButton key={service.id} service={service} />
                 ))}
               </div>
             </section>

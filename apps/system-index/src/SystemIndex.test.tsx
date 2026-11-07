@@ -148,11 +148,15 @@ describe('System Index sections', () => {
     const serviceSection = await screen.findByRole('region', { name: 'NAS services' });
     expect(screen.getByRole('heading', { level: 1, name: 'System Index' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: 'Local Web apps' })).toBeVisible();
-    expect(within(serviceSection).getByRole('heading', { level: 3, name: 'Jellyfin' })).toBeVisible();
-    const serviceLink = within(serviceSection).getByRole('link', { name: 'Open Jellyfin (external service)' });
+    expect(within(serviceSection).getByText('Jellyfin')).toBeVisible();
+    const serviceLink = within(serviceSection).getByRole('link', { name: 'Open Jellyfin (opens in a new tab)' });
     expect(serviceLink).toHaveAttribute('href', services[0].url);
     expect(within(serviceSection).queryByRole('status')).not.toBeInTheDocument();
-    expect(serviceSection).toHaveTextContent('External service');
+    expect(serviceLink).toHaveAttribute('target', '_blank');
+    expect(serviceLink).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(serviceLink).toHaveTextContent(/^Jellyfin$/);
+    expect(serviceSection).not.toHaveTextContent('External service');
+    expect(serviceSection).not.toHaveTextContent('01');
     expect(fetchRegistry).toHaveBeenCalledWith('/_local-web/platform/index/registry-v2.json', { cache: 'no-store' });
     expect(controller.create).toHaveBeenCalledWith(expect.anything(), registry.apps, expect.any(Function));
   });

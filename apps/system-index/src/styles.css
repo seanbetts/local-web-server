@@ -170,6 +170,23 @@ body {
   color: var(--lwp-colour-text);
 }
 
-.system-index-card__external {
-  color: var(--lwp-colour-text-muted);
+.system-index__services {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lwp-space-3);
+}
+
+.system-index-service {
+  min-height: 3rem;
+  max-width: 100%;
+  gap: var(--lwp-space-3);
+  text-align: left;
+  white-space: normal;
+}
+
+.system-index-service__icon {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  color: var(--system-index-accent);
 }

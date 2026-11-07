@@ -88,7 +88,7 @@ test('keeps failed apps accessible on a narrow screen and opens the full card', 
 
 test('services never create health probes and their links open with the keyboard', async ({ page }) => {
   const serviceRequests: string[] = [];
-  await page.route('https://local.example.ts.net:*/**', (route) => {
+  await page.context().route('https://local.example.ts.net:*/**', (route) => {
     serviceRequests.push(route.request().method());
     return route.fulfill({ contentType: 'text/html', body: '<h1>Opened service</h1>' });
   });
@@ -97,22 +97,26 @@ test('services never create health probes and their links open with the keyboard
   await expect(services.getByRole('link')).toHaveCount(7);
   await expect(services.getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2, name: 'Local Web apps' })).toBeVisible();
-  await expect(services.getByRole('heading', { level: 3 })).toHaveCount(7);
+  await expect(services).not.toContainText('External service');
   for (const [title, port] of [
     ['NAS Administration', 8443], ['Jellyfin', 8444], ['qBittorrent', 8080],
     ['Prowlarr', 9696], ['Radarr', 7878], ['Sonarr', 8989], ['slskd', 5030],
   ]) {
-    await expect(services.getByRole('link', { name: `Open ${title} (external service)`, exact: true }))
+    await expect(services.getByRole('link', { name: `Open ${title} (opens in a new tab)`, exact: true }))
       .toHaveAttribute('href', `https://local.example.ts.net:${port}`);
   }
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   expect(serviceRequests).toEqual([]);
-  const link = services.getByRole('link', { name: 'Open Jellyfin (external service)', exact: true });
+  const link = services.getByRole('link', { name: 'Open Jellyfin (opens in a new tab)', exact: true });
   await link.focus();
   await expect(link).toBeFocused();
+  const popupPromise = page.waitForEvent('popup');
   await link.press('Enter');
-  await expect(page).toHaveURL('https://local.example.ts.net:8444/');
-  await expect(page.getByRole('heading', { name: 'Opened service' })).toBeVisible();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL('https://local.example.ts.net:8444/');
+  await expect(popup.getByRole('heading', { name: 'Opened service' })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`${indexUrl}$`));
+  expect(await popup.evaluate(() => window.opener === null)).toBe(true);
   expect(serviceRequests).toEqual(['GET']);
 });
 
@@ -130,6 +134,10 @@ for (const colourScheme of ['light', 'dark'] as const) {
       await openIndex(page);
       await expect(page.getByRole('heading', { name: 'NAS services', level: 2 })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      const service = page.getByRole('region', { name: 'NAS services' }).getByRole('link').first();
+      const serviceBox = await service.boundingBox();
+      expect(serviceBox!.height).toBeGreaterThanOrEqual(44);
+      expect(serviceBox!.height).toBeLessThan(90);
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
       expect(errors).toEqual([]);
       // The fixture deliberately returns 503 for the Example Notes backend health probe.
