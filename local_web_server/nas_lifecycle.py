@@ -251,7 +251,9 @@ def nas_client_root(registry):
     identity = dict(adapter=registry.target.adapter_command, runtimeRoot=str(registry.runtime_root),
                     publicOrigin=registry.public_origin)
     digest = hashlib.sha256(_canonical(identity)).hexdigest()
-    return Path.home()/'Library/Application Support/Local Web/nas'/digest
+    namespace = Path.home()/'Library/Application Support/Local Web/nas'/digest
+    from .nas_origin_transition import resolve_nas_origin_client_root
+    return resolve_nas_origin_client_root(registry, namespace)
 
 
 class NasHostDeploymentManager:

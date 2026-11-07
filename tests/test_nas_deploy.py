@@ -30,6 +30,31 @@ class AdapterBoundary:
 
 
 class NasDeploymentTests(unittest.TestCase):
+    def test_stage_uploads_verified_bytes_without_activation_health_or_finish(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            adapter = AdapterBoundary(self.responses(descriptor, [entry.sha256 for entry in descriptor.files]))
+            def forbidden(_):
+                self.fail('staging must not run a public health or transition gate')
+            publisher = NasDeploymentManager(adapter, public_health=forbidden, before_transition=forbidden)
+            publisher.stage(descriptor, files, operation_id='staged-original', expected_current=None)
+            self.assertEqual([action for action, _, _ in adapter.calls], ['prepare', 'upload'])
+            self.assertTrue(all(op == 'staged-original' for _, op, _ in adapter.calls))
+
+    def test_staged_activation_keeps_the_original_operation_and_transition_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            adapter = AdapterBoundary(self.responses(descriptor))
+            transitions = []
+            publisher = NasDeploymentManager(adapter, public_health=lambda _: True,
+                                             before_transition=transitions.append)
+            publisher.stage(descriptor, files, operation_id='staged-original', expected_current=None)
+            adapter.calls.clear()
+            result = publisher.activate_staged(descriptor, operation_id='staged-original', expected_current=None)
+            self.assertEqual(result.operation_id, 'staged-original')
+            self.assertEqual([action for action, _, _ in adapter.calls], ['activate', 'finish'])
+            self.assertEqual(transitions, ['activate'])
+
     def test_resumed_upload_keeps_original_bundle_selection_after_partial_consumption(self):
         with tempfile.TemporaryDirectory() as temporary:
             files, descriptor = self.fixture(Path(temporary))

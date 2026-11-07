@@ -116,6 +116,19 @@ class NasDeploymentManager:
                operation_id: str, expected_current: str | None,
                runtime_archive: Path | None = None,
                installation_approval: InstallationApproval | None = None) -> PublicationResult:
+        self.stage(descriptor, files_root, operation_id=operation_id, expected_current=expected_current,
+                   runtime_archive=runtime_archive, installation_approval=installation_approval)
+        return self.activate_staged(descriptor, operation_id=operation_id, expected_current=expected_current)
+
+    def stage(self, descriptor: ReleaseDescriptorV1, files_root: Path, *,
+              operation_id: str, expected_current: str | None,
+              runtime_archive: Path | None = None,
+              installation_approval: InstallationApproval | None = None) -> None:
+        """Prepare verified immutable bytes under the original remote fence only.
+
+        Cutover coordinators retain their durable local receipt and can import
+        fenced app state before explicitly requesting the first activation.
+        """
         self._validate(descriptor, expected_current)
         files_root = Path(files_root)
         if snapshot_files(files_root) != descriptor.files:
@@ -160,8 +173,18 @@ class NasDeploymentManager:
                     payload=dict(**identity, bundle=bundle, runtimeArtifact=runtime))
                 if uploaded != {'uploaded': True} or type(uploaded.get('uploaded')) is not bool:
                     raise ValueError('NAS did not acknowledge completed artifact verification')
-            return self._transition('activate', descriptor, operation_id, expected_current,
-                                    dict(**identity, expectedCurrent=expected_current))
+
+    def activate_staged(self, descriptor: ReleaseDescriptorV1, *, operation_id: str,
+                        expected_current: str | None) -> PublicationResult:
+        """Activate the already staged original operation with the normal gates.
+
+        This is an explicit first transition, not recovery. The remote fence
+        rejects changed identities and returns original status after intent.
+        """
+        self._validate(descriptor, expected_current)
+        return self._transition('activate', descriptor, operation_id, expected_current,
+                                dict(appId=descriptor.app_id, releaseDigest=descriptor.digest,
+                                     expectedCurrent=expected_current))
 
     def rollback(self, descriptor: ReleaseDescriptorV1, *, operation_id: str,
                  expected_current: str) -> PublicationResult:
