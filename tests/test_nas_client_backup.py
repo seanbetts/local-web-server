@@ -293,8 +293,10 @@ class ClientBackupTests(StoreFixture):
         fixture=OriginTransitionTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         # Exact source candidate and destination active-profile authority are synthetic.
         registry=load_registry_bytes(self.profile)
-        source=replace(registry,host='shadow.example.ts.net',public_origin='https://shadow.example.ts.net') if complete else registry
-        destination=registry if complete else replace(registry,host='shadow.example.ts.net',public_origin='https://shadow.example.ts.net')
+        shadow_origin=registry.public_origin.replace('://local.', '://shadow.', 1)
+        shadow_host=shadow_origin.removeprefix('https://')
+        source=replace(registry,host=shadow_host,public_origin=shadow_origin) if complete else registry
+        destination=registry if complete else replace(registry,host=shadow_host,public_origin=shadow_origin)
         context=replace(fixture.context,public_origin=source.public_origin)
         context.save(self.client)
         plan=fixture.plan(source_registry=source,destination_registry=destination,source_context=context,
