@@ -92,8 +92,19 @@ class AppTemplateTests(unittest.TestCase):
         self.assertIn('vendor/local-web-ui.tgz', manifest.production.native_dependencies.lockfiles)
         self.assertEqual(manifest.production.native_dependencies.outputs, ('node_modules',))
 
-    def test_service_requires_explicit_app_owned_production_contract(self):
-        self.assertIsNone(parse_manifest(self.rendered(kind='service')['local-web.json']).production)
+    def test_service_default_owns_pinned_builtin_runtime_and_accepts_explicit_override(self):
+        generated = self.rendered(kind='service')
+        production = parse_manifest(generated['local-web.json']).production
+        self.assertEqual(production.data_contract, 'none')
+        self.assertEqual(production.rollback_policy, 'compatible')
+        self.assertEqual(production.runtime.health_runtime, 'node')
+        self.assertEqual(production.runtime.lockfiles, ('runtime/dependencies.json',))
+        self.assertTrue(production.runtime.base_image.startswith('node@sha256:'))
+        self.assertIn('FROM ${RUNTIME_IMAGE}', generated['runtime/Dockerfile'])
+        self.assertNotIn('RUN ', generated['runtime/Dockerfile'])
+        self.assertEqual(production.runtime.command[0:2], ('node', '/app/current/server/service.mjs'))
+        self.assertIn('{publicOrigin}', production.runtime.command)
+        self.assertEqual(production.native_dependencies.outputs, ('node_modules',))
         value = dict(recipeVersion='1', dataContract='none', rollbackPolicy='compatible',
                      buildCommands=[['npm', 'run', 'build']], nativeDependencies=None,
                      runtime=dict(baseImage='node@sha256:' + 'a' * 64, abi='node-24-linux-amd64', healthRuntime='node',
@@ -113,13 +124,64 @@ class AppTemplateTests(unittest.TestCase):
             for argument, expected in ((None, '127.0.0.1'), ('0.0.0.0', '0.0.0.0')):
                 argv = ['node', str(path), '--port', '12345']
                 if argument is not None:
-                    argv += ['--bind-host', argument]
+                    argv += ['--runtime', 'nas-docker', '--bind-host', argument, '--public-origin', 'https://local.example.ts.net', '--proxy-address', '172.30.200.2']
                 script = ("import { Server } from 'node:http'; "
                           "Server.prototype.listen = function(port, host) { console.log(JSON.stringify({port,host})); return this; }; "
                           "process.argv = " + json.dumps(argv) + "; await import(" + json.dumps(path.as_uri()) + ");")
                 result = subprocess.run(('node', '--input-type=module', '-e', script), check=True,
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(json.loads(result.stdout), dict(port=12345, host=expected))
+
+    def test_service_nas_request_trust_uses_socket_peer_host_and_canonical_origin(self):
+        headers = {'host':'local.example.ts.net', 'x-forwarded-proto':'https'}
+        cases = [
+            ('172.30.200.2', '/api/hello', headers, 200),
+            ('::ffff:172.30.200.2', '/api/hello', dict(headers, origin='https://local.example.ts.net'), 200),
+            ('172.30.200.3', '/api/hello', headers, 403),
+            ('172.30.200.2', '/api/hello', dict(headers, host='other.example.test'), 403),
+            ('172.30.200.2', '/api/hello', {'host':'local.example.ts.net'}, 403),
+            ('172.30.200.2', '/api/hello', dict(headers, **{'x-forwarded-host':'other.example.test'}), 403),
+            ('172.30.200.2', '/api/hello', dict(headers, origin='https://other.example.test'), 403),
+            ('127.0.0.1', '/healthz', {'host':'127.0.0.1:12345'}, 204),
+            ('172.30.200.3', '/healthz', {'host':'127.0.0.1:12345'}, 403),
+            ('172.30.200.2', '/api/hello', headers, 403, ['Host','local.example.ts.net','Host','local.example.ts.net','X-Forwarded-Proto','https']),
+            ('172.30.200.2', '/api/hello', dict(headers, forwarded='proto=https'), 403),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'service.mjs'
+            path.write_text(self.rendered(kind='service')['server/service.mjs'])
+            argv = ['node', str(path), '--runtime', 'nas-docker', '--port', '12345', '--bind-host', '0.0.0.0',
+                    '--public-origin', 'https://local.example.ts.net', '--proxy-address', '172.30.200.2']
+            script = ("import { Server } from 'node:http'; const cases="+json.dumps(cases)+"; const results=[]; "
+                "Server.prototype.listen=function(){ const handler=this.listeners('request')[0]; for(const [peer,url,headers,,rawHeaders] of cases){ "
+                "const request={url,method:'GET',headers,rawHeaders:rawHeaders??Object.entries(headers).flat(),socket:{remoteAddress:peer}}; "
+                "const response={writeHead(status){this.status=status;return this;},end(){results.push(this.status);}}; handler(request,response); "
+                "} console.log(JSON.stringify(results)); return this; }; process.argv="+json.dumps(argv)+"; await import("+json.dumps(path.as_uri())+");")
+            result=subprocess.run(('node','--input-type=module','-e',script),capture_output=True,text=True,timeout=5,check=True)
+            self.assertEqual(json.loads(result.stdout), [case[3] for case in cases])
+
+    def test_app_updater_preserves_app_owned_production_recipe(self):
+        from local_web_server.app_update import _manifest_candidate
+        manifest = json.loads(self.rendered(kind='service')['local-web.json'])
+        manifest['production']['recipeVersion'] = 'app-owned-2'
+        manifest['production']['dataContract'] = 'recipes-v2'
+        content, _, _, _ = _manifest_candidate(json.dumps(manifest).encode(), '0.8.0', ())
+        self.assertEqual(json.loads(content)['production'], manifest['production'])
+
+    def test_service_rejects_implicit_exposure_unknown_flags_and_noncanonical_nas_origin(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'service.mjs'
+            path.write_text(self.rendered(kind='service')['server/service.mjs'])
+            valid = ['--runtime','nas-docker','--bind-host','0.0.0.0','--public-origin','https://local.example.ts.net','--proxy-address','172.30.200.2']
+            cases = [['--bind-host','0.0.0.0'], ['--unknown','value'], ['--port','12345'],
+                     valid[:], valid[:], valid[:]]
+            cases[3][cases[3].index('https://local.example.ts.net')] = 'http://local.example.ts.net'
+            cases[4][cases[4].index('https://local.example.ts.net')] = 'https://local.example.ts.net/'
+            cases[5][cases[5].index('172.30.200.2')] = '203.0.113.2'
+            for arguments in cases:
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(('node',str(path),'--port','12345',*arguments),capture_output=True,timeout=5)
+                    self.assertNotEqual(result.returncode, 0)
 
     def test_generated_checks_remain_app_local(self):
         package = json.loads(self.rendered()["package.json"])
@@ -164,7 +226,7 @@ class AppTemplateTests(unittest.TestCase):
         manifest = json.loads(files["local-web.json"])
         package = json.loads(files["package.json"])
 
-        self.assertEqual(set(files), EXPECTED_PATHS | {"server/service.mjs"})
+        self.assertEqual(set(files), EXPECTED_PATHS | {"server/service.mjs", "runtime/Dockerfile", "runtime/dependencies.json"})
         self.assertEqual(manifest["kind"], "service")
         self.assertEqual(manifest["build"]["output"], "release")
         self.assertEqual(

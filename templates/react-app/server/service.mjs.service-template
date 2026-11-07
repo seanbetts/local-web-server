@@ -1,26 +1,74 @@
 import { createServer } from 'node:http';
+import { isIP } from 'node:net';
 
-const portFlag = process.argv.indexOf('--port');
-const port = Number(process.argv[portFlag + 1]);
-const bindFlag = process.argv.indexOf('--bind-host');
-const bindHost = bindFlag < 0 ? '127.0.0.1' : process.argv[bindFlag + 1];
-
-if (!['127.0.0.1', '0.0.0.0'].includes(bindHost)) {
-  throw new Error('A supported --bind-host is required.');
+const allowed = new Set(['--runtime', '--port', '--bind-host', '--public-origin', '--proxy-address']);
+const flags = new Map();
+for (let index = 2; index < process.argv.length; index += 2) {
+  const name = process.argv[index];
+  const value = process.argv[index + 1];
+  if (!allowed.has(name) || flags.has(name) || !value || value.startsWith('--')) {
+    throw new Error('Explicit supported runtime flag/value pairs are required.');
+  }
+  flags.set(name, value);
+}
+const runtime = flags.get('--runtime') ?? 'macos';
+const port = Number(flags.get('--port'));
+const bindHost = flags.get('--bind-host') ?? '127.0.0.1';
+if (!['macos', 'nas-docker'].includes(runtime) || !Number.isInteger(port) || port < 1 || port > 65535) {
+  throw new Error('A supported runtime and valid --port are required.');
+}
+let publicOrigin;
+let publicHost;
+const proxyAddress = flags.get('--proxy-address');
+if (runtime === 'nas-docker') {
+  const value = flags.get('--public-origin');
+  const origin = new URL(value);
+  const octets = (proxyAddress ?? '').split('.').map(Number);
+  const privateProxy = isIP(proxyAddress ?? '') === 4 && (octets[0] === 10 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168));
+  if (bindHost !== '0.0.0.0' || origin.protocol !== 'https:' || origin.origin !== value ||
+      origin.username || origin.password || origin.port || !/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(origin.hostname) || !privateProxy) {
+    throw new Error('NAS runtime requires explicit bind, canonical HTTPS origin and private proxy address.');
+  }
+  publicOrigin = value;
+  publicHost = origin.host;
+} else if (bindHost !== '127.0.0.1' || flags.has('--public-origin') || flags.has('--proxy-address')) {
+  throw new Error('Mac runtime uses loopback; NAS flags require the explicit NAS runtime.');
 }
 
-if (portFlag < 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
-  throw new Error('A valid --port is required.');
+function trusted(request) {
+  if (runtime === 'macos') return true; // The listener is bound only to Mac loopback.
+  const headers = request.headers;
+  const names = request.rawHeaders.filter((_, index) => index % 2 === 0).map((name) => name.toLowerCase());
+  for (const name of ['host', 'origin', 'x-forwarded-host', 'x-forwarded-proto']) {
+    if (names.filter((value) => value === name).length > 1) return false;
+  }
+  if (headers.origin !== undefined && headers.origin !== publicOrigin) return false;
+  if (headers.forwarded !== undefined) return false;
+  const peer = request.socket.remoteAddress?.replace(/^::ffff:/, '');
+  const health = request.url === '/healthz' && ['GET', 'HEAD'].includes(request.method);
+  if (peer === '127.0.0.1' && health && headers.host === `127.0.0.1:${port}` &&
+      headers['x-forwarded-host'] === undefined && headers['x-forwarded-proto'] === undefined) return true;
+  return peer === proxyAddress && headers.host === publicHost && headers['x-forwarded-proto'] === 'https' &&
+    (headers['x-forwarded-host'] === undefined || headers['x-forwarded-host'] === publicHost);
 }
 
 const server = createServer((request, response) => {
+  if (!trusted(request)) {
+    response.writeHead(403).end();
+    return;
+  }
+  if (!['GET', 'HEAD'].includes(request.method)) {
+    response.writeHead(405, { allow: 'GET, HEAD' }).end();
+    return;
+  }
   if (request.url === '/healthz') {
     response.writeHead(204).end();
     return;
   }
   if (request.url === '/api/hello') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ message: 'Hello from the local service.' }));
+    response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ message: 'Hello from the local service.' }));
     return;
   }
   response.writeHead(404).end();

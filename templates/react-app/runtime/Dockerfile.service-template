@@ -1,0 +1,6 @@
+# Prepared on the Mac. App code and state are mounted separately on the NAS.
+# This reference service uses Node built-ins and has no runtime package install.
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+WORKDIR /app/current
+USER 10001:10001

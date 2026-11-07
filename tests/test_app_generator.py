@@ -195,9 +195,28 @@ class AppGeneratorTests(unittest.TestCase):
         manifest = json.loads((destination / "local-web.json").read_text())
         self.assertEqual(manifest["kind"], "service")
         self.assertTrue((destination / "server/service.mjs").is_file())
+        self.assertTrue((destination / 'runtime/Dockerfile').is_file())
+        self.assertEqual(manifest['production']['dataContract'], 'none')
+        self.assertEqual(manifest['production']['runtime']['healthRuntime'], 'node')
+        report = AppDoctor(target_kind='nas-docker').inspect(destination)
+        self.assertFalse([diagnostic for diagnostic in report.diagnostics if diagnostic.code.startswith('nas.')], report.diagnostics)
         self.assertEqual(len(composer.calls), 1)
         self.assertEqual(composer.calls[0][1].output, Path("release"))
         self.assertEqual(composer.calls[0][1].release_entries[0].target, Path("public"))
+
+    def test_typed_app_owned_production_recipe_survives_creation(self):
+        from dataclasses import replace
+        from local_web_server.app_template import TemplateInputs, render_template
+        from local_web_server.config import parse_manifest
+        inputs = TemplateInputs('recipes', 'Recipe Collection', '/recipes', 'book', '#8EA7C6', '0.1.0', UI_SHA256, (), 'service')
+        content = next(item.content for item in render_template(inputs) if item.path == Path('local-web.json'))
+        recipe = replace(parse_manifest(content).production, recipe_version='app-owned-2', data_contract='recipes-v2')
+        destination = self.workspace/'recipes'
+        generator = AppGenerator(ROOT, artifact_builder=build_ui, doctor=RecordingDoctor(self.trace),
+            process_runner=RecordingProcessRunner(self.trace), release_composer=RecordingReleaseComposer())
+        generator.create(request(destination, kind='service', production_recipe=recipe))
+        manifest = parse_manifest((destination/'local-web.json').read_text())
+        self.assertEqual(manifest.production, recipe)
 
     def test_destination_collision_fails_before_any_build_or_process_work(self):
         """A pre-existing destination must remain untouched."""

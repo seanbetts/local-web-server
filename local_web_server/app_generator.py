@@ -29,6 +29,7 @@ from .app_provenance import (
 from .app_template import TemplateError, TemplateInputs, render_template
 from .config import ConfigError, SUPPORTED_PLATFORM_CONTRACT, load_manifest
 from .icons import canonical_manifest_icon
+from .nas_recipe import ProductionRecipe
 from .process_runner import (
     ProcessCommand,
     ProcessRunError,
@@ -60,6 +61,7 @@ class CreateAppRequest:
     accent: str
     capabilities: tuple[str, ...]
     kind: str = "static"
+    production_recipe: ProductionRecipe | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +121,7 @@ def _validate_request(request: CreateAppRequest, ui_version: str) -> None:
                 ui_sha256="0" * 64,
                 capabilities=request.capabilities,
                 kind=request.kind,
+                production_recipe=request.production_recipe,
             )
         )
     except (TemplateError, TypeError, ValueError) as error:
@@ -470,6 +473,7 @@ class AppGenerator:
                     ui_sha256=artifact.sha256,
                     capabilities=request.capabilities,
                     kind=request.kind,
+                    production_recipe=request.production_recipe,
                 ),
             )
             _write_provenance(stage, request, artifact)

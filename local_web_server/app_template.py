@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .icons import canonical_manifest_icon
-from .nas_recipe import ProductionRecipe, production_declaration, parse_production_recipe
+from .nas_recipe import ContainerBuildRecipe, ProductionRecipe, production_declaration, parse_production_recipe
 from .native_build import NativeDependencyRecipe
 from .process_runner import ProcessCommand
 
@@ -140,13 +140,23 @@ def render_template(inputs: TemplateInputs) -> tuple[RenderedFile, ...]:
         raise TemplateError("inputs must be TemplateInputs")
     _validate(inputs)
     service = inputs.kind == "service"
+    native = NativeDependencyRecipe(
+        ('package-lock.json', 'package.json', 'vendor/local-web-ui.tgz'),
+        (ProcessCommand('native frontend dependencies', ('npm', 'ci')),), ('node_modules',))
     production = inputs.production_recipe
-    if production is None and not service:
-        production = parse_production_recipe(production_declaration('static',
+    if production is None:
+        runtime = ContainerBuildRecipe(
+            base_image='node@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9',
+            abi='node-24-debian-bookworm-amd64', lockfiles=('runtime/dependencies.json',),
+            dockerfile='runtime/Dockerfile',
+            command=('node', '/app/current/server/service.mjs', '--runtime', 'nas-docker',
+                     '--port', '{port}', '--bind-host', '{bindHost}',
+                     '--public-origin', '{publicOrigin}', '--proxy-address', '{proxyAddress}'),
+            cpu_limit=1, memory_limit_mib=256, health_runtime='node') if service else None
+        production = parse_production_recipe(production_declaration(inputs.kind,
+            data_contract='none', runtime=runtime,
             build_commands=(ProcessCommand('native frontend', ('npm', 'run', 'build')),),
-            native_dependencies=NativeDependencyRecipe(
-                ('package-lock.json', 'package.json', 'vendor/local-web-ui.tgz'),
-                (ProcessCommand('native frontend dependencies', ('npm', 'ci')),), ('node_modules',))), kind='static')
+            native_dependencies=native), kind=inputs.kind)
     replacements = {
         "__PRODUCTION_MANIFEST__": (
             '  "production": ' + json.dumps(production.to_dict(), indent=2).replace('\n', '\n  ') + ',\n'
@@ -197,7 +207,7 @@ def render_template(inputs: TemplateInputs) -> tuple[RenderedFile, ...]:
             else "a static React, TypeScript, and Vite client"
         ),
         "__SERVICE_DEVELOPMENT__": (
-            "The reference backend lives in `server/`, defaults to loopback, accepts an explicit `--bind-host` for an isolated container, and is assembled with the frontend by the platform's declarative release contract.\n"
+            "The reference backend lives in `server/` and defaults to Mac loopback. The checked-in NAS production recipe supplies explicit bind, HTTPS origin and trusted-proxy flags; it uses a pinned Node 24 image with built-in modules only. Native frontend dependencies are cached separately. The declarative release composer assembles the frontend and server. Extend the app-owned recipe when adding runtime dependencies, secrets or durable data; code rollback never restores data.\n"
             if service
             else ""
         ),
