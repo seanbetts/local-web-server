@@ -142,8 +142,10 @@ explicitly injected publication manager. `NasPlatformInstallationSession` adds
 a separate durable reserved-platform operation receipt, exact original files
 and capsule, and original upload selection. Recovery checks original status,
 resumes a still-prepared upload, or reconciles an uncertain activation without
-replaying it. Platform failure does not create a selected app deployment
-receipt. These library APIs are not a privileged bootstrap command. The private
+replaying it. An installer invocation that recovers a pending platform operation
+returns that original result without starting another publication. Platform
+failure does not create a selected app deployment receipt. These library APIs
+are not a privileged bootstrap command. The private
 adapter's production callbacks remain disabled by default.
 
 The existing six-action protocol carries an optional `installationApproval`

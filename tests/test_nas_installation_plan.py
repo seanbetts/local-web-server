@@ -215,6 +215,42 @@ class InstallationPlanTests(unittest.TestCase):
             with self.assertRaises(InstallError):install_platform(fixture.repository,dry_run=False,registry_path=profile)
             publish.assert_not_called()
 
+    def test_normal_install_recovers_original_and_returns_without_another_publication(self):
+        from types import SimpleNamespace
+        from local_web_server.nas_deploy import NasPublicationError
+        from local_web_server.nas_platform_installation import SavedNasInstallationContext,NasPlatformInstallationSession,install_saved_nas_platform
+        from local_web_server.nas_transport import NasTransportError
+        from tests.test_nas_deploy import AdapterBoundary
+        from tests.test_nas_platform_installation import NasPlatformInstallationTests
+        fixture=NasPlatformInstallationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        registry=replace(fixture.registry,runtime_root=Path('/volume2/docker/local-web'),apps=())
+        plan=self.preview(evidence=tuple(InstallationEvidence(name,'verified','c'*64) for name in InstallationEvidence.REQUIRED),
+            hostname_handoff=HostnameHandoff('local','local-mac','local-shadow'))
+        release=plan.prepared.descriptor.digest
+        context=SavedNasInstallationContext(registry.public_origin,registry.target.network_subnet,registry.target.proxy_address,
+            'caddy@sha256:'+'b'*64,'tailscale@sha256:'+'c'*64,plan.evidence,HostnameHandoff('local','local-mac','local-shadow'),(),((release,plan.prepared.source_config_digest),))
+        responses=dict(prepare=dict(missingBlobs=[],runtimeRequired=False),
+            activate=NasTransportError('activate','original',outcome_unknown=True),
+            status=NasTransportError('status','original',outcome_unknown=True),finish=dict(finished=True))
+        adapter=AdapterBoundary(responses);health=Mock();health.check.return_value=SimpleNamespace(healthy=True)
+        observe=Mock(return_value=SimpleNamespace(descriptor=plan.prepared.descriptor,observed_healthy=True))
+        prepare=Mock(side_effect=AssertionError('recovery must not prepare another publication'))
+        with tempfile.TemporaryDirectory() as folder:
+            client=Path(folder).resolve();context.save(client)
+            session=NasPlatformInstallationSession(client,adapter,public_health=lambda _:True)
+            with self.assertRaises(NasPublicationError):session.apply(plan,approved_capsule_digest=plan.approval.digest,
+                profile_revision='b'*64,expected_current=None,operation_id='original',next_context=context)
+            adapter.calls.clear();responses['status']=dict(state='active',phase='active',current=release,healthy=True)
+            arguments=dict(profile_revision='b'*64,client_root=client,transport=adapter,health=health,observe=observe,prepare=prepare)
+            with self.assertRaisesRegex(ValueError,'original-operation recovery'):
+                install_saved_nas_platform(fixture.repository,registry,dry_run=True,**arguments)
+            self.assertEqual(adapter.calls,[])
+            result=install_saved_nas_platform(fixture.repository,registry,dry_run=False,**arguments)
+            self.assertEqual((result.operation_id,result.current),('original',release))
+            self.assertEqual([action for action,_,_ in adapter.calls],['status','finish'])
+            prepare.assert_not_called()
+            with session.store.lock():self.assertIsNone(session.store.pending())
+
     def test_saved_default_refresh_uses_selected_candidate_and_observed_unselected_metadata(self):
         from local_web_server.nas_platform_installation import SavedNasInstallationContext,KnownRuntimeVersion,install_saved_nas_platform
         from local_web_server.release_manifest import RuntimeIdentity

@@ -535,8 +535,7 @@ def install_saved_nas_platform(repository,registry,*,dry_run,profile_revision,se
     with session.store.lock():pending=session.store.pending()
     if pending is not None:
         if dry_run:raise ValueError('platform installation requires original-operation recovery before a new preview')
-        session.recover(pending['operationId'])
-        context=(context_loader or SavedNasInstallationContext.load)(client_root)
+        return session.recover(pending['operationId'])
     platform_live=observe(transport,PLATFORM_APP_ID)
     if platform_live.descriptor is None or platform_live.observed_healthy is not True:
         raise ValueError('current approved NAS platform must be freshly healthy')
