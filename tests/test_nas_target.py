@@ -34,6 +34,22 @@ class NasTargetTests(unittest.TestCase):
         self.assertEqual(registry.target.adapter_command,('/usr/local/bin/local-web-nas',))
         self.assertEqual(registry.target.proxy_address,'172.30.200.2')
 
+    def test_nas_target_declares_a_named_mac_builder_without_using_ambient_docker(self):
+        self.payload['target']=dict(kind='nas-docker',adapterCommand=['/usr/local/bin/local-web-nas'],
+            networkSubnet='172.30.200.0/24',proxyAddress='172.30.200.2',buildContext='local-web-build')
+        self.assertEqual(self.load().target.build_context, 'local-web-build')
+        for value in ('', '-host', 'two words', ['context']):
+            self.payload['target']['buildContext'] = value
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                self.load()
+
+    def test_nas_platform_release_identity_cannot_be_registered_as_a_user_app(self):
+        self.payload['target']=dict(kind='nas-docker',adapterCommand=['/usr/local/bin/local-web-nas'],
+            networkSubnet='172.30.200.0/24',proxyAddress='172.30.200.2')
+        self.payload['apps']=[dict(id='local-web-platform',repository=str(self.root/'reserved'),autoDeploy=False)]
+        with self.assertRaisesRegex(ConfigError, 'reserved'):
+            self.load()
+
     def test_nas_target_cannot_fall_through_to_macos_operational_managers(self):
         self.payload['target']=dict(kind='nas-docker',adapterCommand=['/usr/local/bin/local-web-nas'],
                                     networkSubnet='172.30.200.0/24',proxyAddress='172.30.200.2')

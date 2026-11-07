@@ -8,7 +8,9 @@ expected-current/data-contract compatibility, and owns atomic serving pointers.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 import hashlib
+import gzip
 import os
 from pathlib import Path
 import re
@@ -67,7 +69,9 @@ def _artifact_metadata(path: Path) -> dict[str, Any]:
 
 
 def _bundle(root: Path, files: tuple[FileEntry, ...], path: Path) -> dict[str, Any]:
-    with tarfile.open(path, 'w:gz', format=tarfile.PAX_FORMAT) as archive:
+    with (path.open('wb') as raw,
+          gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as compressed,
+          tarfile.open(fileobj=compressed, mode='w', format=tarfile.PAX_FORMAT) as archive):
         for entry in files:
             source = root / entry.path
             actual = _artifact_metadata(source)
@@ -85,8 +89,16 @@ def _bundle(root: Path, files: tuple[FileEntry, ...], path: Path) -> dict[str, A
 
 
 class NasDeploymentManager:
-    def __init__(self, transport: PublicationTransport):
+    def __init__(self, transport: PublicationTransport, *,
+                 public_health: Callable[[ReleaseDescriptorV1], bool],
+                 before_transition: Callable[[str], None] | None = None,
+                 select_upload_blobs: Callable[[tuple[str, ...]], tuple[str, ...]] | None = None):
+        if not callable(public_health):
+            raise ValueError('NAS publication requires a public HTTPS health gate')
         self.transport = transport
+        self.public_health = public_health
+        self.before_transition = before_transition
+        self.select_upload_blobs = select_upload_blobs
 
     @staticmethod
     def _validate(descriptor: ReleaseDescriptorV1, expected_current: str | None) -> None:
@@ -116,6 +128,12 @@ class NasDeploymentManager:
         missing = prepared['missingBlobs']
         if len(set(missing)) != len(missing) or any(digest not in known for digest in missing):
             raise ValueError('NAS requested blobs outside the release descriptor')
+        selection = tuple(sorted(missing))
+        if self.select_upload_blobs is not None:
+            selection = self.select_upload_blobs(selection)
+            if (type(selection) is not tuple or any(type(digest) is not str or digest not in known for digest in selection)
+                    or len(set(selection)) != len(selection) or not set(missing) <= set(selection)):
+                raise ValueError('invalid original NAS upload selection')
         runtime = None
         if prepared['runtimeRequired']:
             if descriptor.runtime is None or runtime_archive is None:
@@ -124,8 +142,8 @@ class NasDeploymentManager:
             if 'sha256:' + runtime['sha256'] != descriptor.runtime.dependency_digest:
                 raise ValueError('Linux dependency archive does not match the descriptor')
         with tempfile.TemporaryDirectory(prefix='local-web-nas-upload-') as temporary:
-            bundle = _bundle(files_root, tuple(known[digest] for digest in sorted(missing)),
-                             Path(temporary) / 'blobs.tar.gz') if missing else None
+            bundle = _bundle(files_root, tuple(known[digest] for digest in sorted(selection)),
+                             Path(temporary) / 'blobs.tar.gz') if selection else None
             if bundle is not None or runtime is not None:
                 uploaded = self.transport.request('upload', operation_id=operation_id,
                     payload=dict(**identity, bundle=bundle, runtimeArtifact=runtime))
@@ -146,7 +164,72 @@ class NasDeploymentManager:
     def _transition(self, action: str, descriptor: ReleaseDescriptorV1,
                     operation_id: str, expected_current: str | None,
                     payload: dict[str, Any]) -> PublicationResult:
+        acknowledgement = self._request_transition(action, descriptor, operation_id, payload)
+        return self._complete_transition(descriptor, operation_id, expected_current, acknowledgement)
+
+    def reconcile(self, descriptor: ReleaseDescriptorV1, *, operation_id: str,
+                  expected_current: str | None) -> PublicationResult:
+        """Observe an original transition; never resend its activation request."""
+        self._validate(descriptor, expected_current)
+        try:
+            acknowledgement = self.transport.request('status', operation_id=operation_id,
+                payload=dict(appId=descriptor.app_id, releaseDigest=descriptor.digest))
+        except NasTransportError as error:
+            raise NasPublicationError(descriptor, operation_id) from error
+        return self._complete_transition(descriptor, operation_id, expected_current, acknowledgement)
+
+    def _complete_transition(self, descriptor: ReleaseDescriptorV1, operation_id: str,
+                             expected_current: str | None, acknowledgement: dict) -> PublicationResult:
         identity = dict(appId=descriptor.app_id, releaseDigest=descriptor.digest)
+        if not self._terminal(acknowledgement, descriptor, expected_current):
+            raise NasPublicationError(descriptor, operation_id)
+        public_healthy = self._public_healthy(descriptor, operation_id)
+        if not public_healthy and acknowledgement['state'] == 'active':
+            # Recover this operation; a second operation would bypass its fence.
+            try:
+                acknowledgement = self._request_transition('rollback', descriptor, operation_id,
+                    dict(**identity, expectedCurrent=descriptor.digest, publicHealthFailed=True))
+            except NasTransportError as error:
+                raise NasPublicationError(descriptor, operation_id) from error
+            if (not self._terminal(acknowledgement, descriptor, expected_current)
+                    or acknowledgement['state'] != 'rolled-back'):
+                raise NasPublicationError(descriptor, operation_id)
+            public_healthy = self._public_healthy(descriptor, operation_id)
+        if not public_healthy:
+            raise NasPublicationError(descriptor, operation_id)
+        state, current = acknowledgement['state'], acknowledgement['current']
+        result = PublicationResult(operation_id, descriptor.digest, state, current)
+        try:
+            finished = self.transport.request('finish', operation_id=operation_id,
+                payload=dict(**identity, state=state, current=current))
+        except NasTransportError as error:
+            raise NasPublicationError(descriptor, operation_id) from error
+        if finished != {'finished': True} or type(finished.get('finished')) is not bool:
+            raise NasPublicationError(descriptor, operation_id)
+        return result
+
+    def _public_healthy(self, descriptor: ReleaseDescriptorV1, operation_id: str) -> bool:
+        try:
+            result = self.public_health(descriptor)
+        except Exception as error:
+            raise NasPublicationError(descriptor, operation_id) from error
+        if type(result) is not bool:
+            raise NasPublicationError(descriptor, operation_id)
+        return result
+
+    @staticmethod
+    def _terminal(acknowledgement: dict, descriptor: ReleaseDescriptorV1,
+                  expected_current: str | None) -> bool:
+        return (type(acknowledgement) is dict and acknowledgement.get('healthy') is True and (
+            acknowledgement.get('state') == 'active' and acknowledgement.get('current') == descriptor.digest
+            or acknowledgement.get('state') == 'rolled-back' and expected_current is not None
+            and acknowledgement.get('current') == expected_current))
+
+    def _request_transition(self, action: str, descriptor: ReleaseDescriptorV1,
+                            operation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        identity = dict(appId=descriptor.app_id, releaseDigest=descriptor.digest)
+        if self.before_transition is not None:
+            self.before_transition(action)
         try:
             acknowledgement = self.transport.request(action, operation_id=operation_id, payload=payload)
         except NasTransportError as error:
@@ -158,18 +241,4 @@ class NasDeploymentManager:
                 acknowledgement = self.transport.request('status', operation_id=operation_id, payload=identity)
             except NasTransportError as status_error:
                 raise NasPublicationError(descriptor, operation_id) from status_error
-        if type(acknowledgement) is not dict:
-            raise NasPublicationError(descriptor, operation_id)
-        state = acknowledgement.get('state')
-        current = acknowledgement.get('current')
-        terminal = (acknowledgement.get('healthy') is True and (
-            state == 'active' and current == descriptor.digest
-            or state == 'rolled-back' and expected_current is not None and current == expected_current))
-        if not terminal:
-            raise NasPublicationError(descriptor, operation_id)
-        result = PublicationResult(operation_id, descriptor.digest, state, current)
-        finished = self.transport.request('finish', operation_id=operation_id,
-            payload=dict(**identity, state=state, current=current))
-        if finished != {'finished': True} or type(finished.get('finished')) is not bool:
-            raise NasPublicationError(descriptor, operation_id)
-        return result
+        return acknowledgement

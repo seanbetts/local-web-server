@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from local_web_server.nas_deploy import NasDeploymentManager, NasPublicationError
+from local_web_server.nas_deploy import _bundle
 from local_web_server.nas_transport import NasTransport, NasTransportError
 from local_web_server.nas_models import NasTarget
 from local_web_server.release_manifest import FileEntry, ReleaseDescriptorV1, RuntimeIdentity
@@ -29,6 +30,145 @@ class AdapterBoundary:
 
 
 class NasDeploymentTests(unittest.TestCase):
+    def test_resumed_upload_keeps_original_bundle_selection_after_partial_consumption(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            missing = [entry.sha256 for entry in descriptor.files]
+            responses = self.responses(descriptor, missing)
+            responses['upload'] = NasTransportError('upload', 'original', outcome_unknown=True)
+            original = None
+            def select_upload(requested):
+                nonlocal original
+                if original is None:
+                    original = requested
+                self.assertTrue(set(requested) <= set(original))
+                return original
+            bundles = []
+            def inspect(action, payload):
+                if action == 'upload':
+                    bundles.append((payload['bundle']['sha256'], payload['bundle']['blobs']))
+            adapter = AdapterBoundary(responses, inspect)
+            publisher = NasDeploymentManager(adapter, public_health=lambda _: True, select_upload_blobs=select_upload)
+            with self.assertRaises(NasTransportError):
+                publisher.deploy(descriptor, files, operation_id='original', expected_current=None)
+            responses['prepare'] = dict(missingBlobs=missing[1:], runtimeRequired=False)
+            responses['upload'] = dict(uploaded=True)
+            publisher.deploy(descriptor, files, operation_id='original', expected_current=None)
+            self.assertEqual(bundles[0], bundles[1])
+            self.assertEqual(set(bundles[1][1]), set(missing))
+    def test_original_upload_bundle_is_byte_identical_when_preparation_is_resumed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            files, descriptor = self.fixture(root)
+            first = _bundle(files, descriptor.files, root/'first.tar.gz')
+            second = _bundle(files, descriptor.files, root/'other-name.tar.gz')
+            self.assertEqual(first['sha256'], second['sha256'])
+            self.assertEqual((root/'first.tar.gz').read_bytes()[4:8], b'\0'*4)
+    def test_recovery_only_observes_original_status_then_public_gate_and_finish(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, descriptor = self.fixture(Path(temporary))
+            adapter = AdapterBoundary(self.responses(descriptor))
+            transitions = []
+            result = NasDeploymentManager(adapter, public_health=lambda _: True,
+                before_transition=transitions.append).reconcile(
+                    descriptor, operation_id='original', expected_current='b'*64)
+            self.assertEqual(result.state, 'active')
+            self.assertEqual([action for action, _, _ in adapter.calls], ['status', 'finish'])
+            self.assertEqual(transitions, [])
+
+    def test_transition_intent_is_recorded_before_the_first_activation_request(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            transitions = []
+            def inspect(action, _):
+                if action == 'activate':
+                    self.assertEqual(transitions, ['activate'])
+            adapter = AdapterBoundary(self.responses(descriptor), inspect)
+            NasDeploymentManager(adapter, public_health=lambda _: True,
+                before_transition=transitions.append).deploy(
+                    descriptor, files, operation_id='original', expected_current=None)
+
+    def test_public_failure_restores_previous_code_under_the_original_operation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            responses = self.responses(descriptor)
+            responses['rollback'] = dict(state='rolled-back', current='b'*64, healthy=True)
+            adapter = AdapterBoundary(responses)
+            observed = []
+            checks = iter((False, True))
+            def public_health(release):
+                observed.append(release.app_id)
+                return next(checks)
+            result = NasDeploymentManager(adapter, public_health=public_health).deploy(
+                descriptor, files, operation_id='original', expected_current='b'*64)
+            self.assertEqual(result.state, 'rolled-back')
+            self.assertEqual(result.current, 'b'*64)
+            self.assertEqual(observed, ['example', 'example'])
+            self.assertEqual([action for action, _, _ in adapter.calls], ['prepare', 'activate', 'rollback', 'finish'])
+            self.assertEqual({operation for _, operation, _ in adapter.calls}, {'original'})
+            self.assertEqual(adapter.calls[2][2], dict(appId='example', releaseDigest=descriptor.digest,
+                expectedCurrent=descriptor.digest, publicHealthFailed=True))
+
+    def test_lost_public_rollback_ack_reconciles_status_without_replaying_either_transition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            responses = self.responses(descriptor)
+            responses['rollback'] = NasTransportError('rollback', 'original', outcome_unknown=True)
+            responses['status'] = dict(state='rolled-back', current='b'*64, healthy=True)
+            adapter = AdapterBoundary(responses)
+            checks = iter((False, True))
+            result = NasDeploymentManager(adapter, public_health=lambda _: next(checks)).deploy(
+                descriptor, files, operation_id='original', expected_current='b'*64)
+            self.assertEqual(result.state, 'rolled-back')
+            self.assertEqual([action for action, _, _ in adapter.calls], ['prepare', 'activate', 'rollback', 'status', 'finish'])
+            self.assertEqual({operation for _, operation, _ in adapter.calls}, {'original'})
+
+    def test_failed_restored_public_gate_keeps_original_operation_unfinished(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            responses = self.responses(descriptor)
+            responses['rollback'] = dict(state='rolled-back', current='b'*64, healthy=True)
+            adapter = AdapterBoundary(responses)
+            with self.assertRaises(NasPublicationError):
+                NasDeploymentManager(adapter, public_health=lambda _: False).deploy(
+                    descriptor, files, operation_id='original', expected_current='b'*64)
+            self.assertEqual([action for action, _, _ in adapter.calls], ['prepare', 'activate', 'rollback'])
+
+    def test_public_failure_without_a_previous_release_retains_recovery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            responses = self.responses(descriptor)
+            responses['rollback'] = dict(state='recovery-required', current=descriptor.digest, healthy=False)
+            adapter = AdapterBoundary(responses)
+            with self.assertRaises(NasPublicationError):
+                NasDeploymentManager(adapter, public_health=lambda _: False).deploy(
+                    descriptor, files, operation_id='original', expected_current=None)
+            self.assertNotIn('finish', [action for action, _, _ in adapter.calls])
+
+    def test_public_probe_exception_retains_recovery_without_a_guessed_rollback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            adapter = AdapterBoundary(self.responses(descriptor))
+            def unavailable(_):
+                raise OSError('probe unavailable')
+            with self.assertRaises(NasPublicationError):
+                NasDeploymentManager(adapter, public_health=unavailable).deploy(
+                    descriptor, files, operation_id='original', expected_current='b'*64)
+            self.assertEqual([action for action, _, _ in adapter.calls], ['prepare', 'activate'])
+
+    def test_refused_public_recovery_keeps_the_candidate_and_original_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            files, descriptor = self.fixture(Path(temporary))
+            responses = self.responses(descriptor)
+            responses['rollback'] = NasTransportError('rollback', 'original', outcome_unknown=False)
+            adapter = AdapterBoundary(responses)
+            with self.assertRaises(NasPublicationError) as caught:
+                NasDeploymentManager(adapter, public_health=lambda _: False).deploy(
+                    descriptor, files, operation_id='original', expected_current='b'*64)
+            self.assertEqual(caught.exception.operation_id, 'original')
+            self.assertEqual(caught.exception.release_digest, descriptor.digest)
+            self.assertNotIn('finish', [action for action, _, _ in adapter.calls])
+
     def fixture(self, root):
         files = root / 'files'
         files.mkdir()
@@ -66,7 +206,7 @@ class NasDeploymentTests(unittest.TestCase):
                         self.assertEqual(archive.extractfile('blobs/' + missing).read(), b'new')
                     self.assertEqual(bundle['blobs'], [missing])
             adapter = AdapterBoundary(self.responses(descriptor, [missing]), inspect)
-            result = NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current='b' * 64)
+            result = NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current='b' * 64)
             self.assertEqual(result.state, 'active')
             self.assertEqual(result.current, descriptor.digest)
             self.assertEqual([call[0] for call in adapter.calls], ['prepare', 'upload', 'activate', 'finish'])
@@ -76,7 +216,7 @@ class NasDeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             files, descriptor = self.fixture(Path(temporary))
             adapter = AdapterBoundary(self.responses(descriptor))
-            result = NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current=None)
+            result = NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current=None)
             self.assertEqual(result.state, 'active')
             self.assertEqual([call[0] for call in adapter.calls], ['prepare', 'activate', 'finish'])
 
@@ -86,7 +226,7 @@ class NasDeploymentTests(unittest.TestCase):
             responses = self.responses(descriptor)
             responses['activate'] = NasTransportError('activate', 'op', outcome_unknown=True)
             adapter = AdapterBoundary(responses)
-            result = NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current=None)
+            result = NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current=None)
             self.assertEqual(result.state, 'active')
             self.assertEqual([call[0] for call in adapter.calls], ['prepare', 'activate', 'status', 'finish'])
             self.assertEqual({call[1] for call in adapter.calls}, {'op'})
@@ -98,7 +238,7 @@ class NasDeploymentTests(unittest.TestCase):
             responses['upload'] = NasTransportError('upload', 'op', outcome_unknown=True)
             adapter = AdapterBoundary(responses)
             with self.assertRaises(NasTransportError):
-                NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current='b' * 64)
+                NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current='b' * 64)
             self.assertEqual([call[0] for call in adapter.calls], ['prepare', 'upload'])
 
     def test_unknown_or_unhealthy_status_retains_recovery_without_finish(self):
@@ -110,7 +250,7 @@ class NasDeploymentTests(unittest.TestCase):
                 responses['status'] = dict(state=state, current=descriptor.digest, healthy=False)
                 adapter = AdapterBoundary(responses)
                 with self.subTest(state=state), self.assertRaises(NasPublicationError) as caught:
-                    NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current='b' * 64)
+                    NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current='b' * 64)
                 self.assertEqual(caught.exception.operation_id, 'op')
                 self.assertEqual(caught.exception.release_digest, descriptor.digest)
                 self.assertEqual([call[0] for call in adapter.calls], ['prepare', 'activate', 'status'])
@@ -120,7 +260,7 @@ class NasDeploymentTests(unittest.TestCase):
             files, descriptor = self.fixture(Path(temporary))
             descriptor = dataclasses.replace(descriptor, rollback_policy='migration-required')
             adapter = AdapterBoundary({})
-            manager = NasDeploymentManager(adapter)
+            manager = NasDeploymentManager(adapter, public_health=lambda _: True)
             with self.assertRaises(ValueError):
                 manager.deploy(descriptor, files, operation_id='op', expected_current=None)
             with self.assertRaises(ValueError):
@@ -133,19 +273,19 @@ class NasDeploymentTests(unittest.TestCase):
             (files / 'a').write_bytes(b'changed after build')
             adapter = AdapterBoundary(self.responses(descriptor))
             with self.assertRaises(ValueError):
-                NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current=None)
+                NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current=None)
             self.assertEqual(adapter.calls, [])
             (files / 'a').write_bytes(b'new')
             responses = self.responses(descriptor, ['f' * 64])
             adapter = AdapterBoundary(responses)
             with self.assertRaises(ValueError):
-                NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current=None)
+                NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current=None)
             self.assertEqual([call[0] for call in adapter.calls], ['prepare'])
             responses = self.responses(descriptor)
             responses['prepare']['runtimeRequired'] = True
             adapter = AdapterBoundary(responses)
             with self.assertRaises(ValueError):
-                NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current=None)
+                NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current=None)
             self.assertEqual([call[0] for call in adapter.calls], ['prepare'])
 
     def test_runtime_archive_is_checksum_bound_and_uploaded_only_on_cache_miss(self):
@@ -160,21 +300,21 @@ class NasDeploymentTests(unittest.TestCase):
             responses = self.responses(descriptor)
             responses['prepare']['runtimeRequired'] = True
             adapter = AdapterBoundary(responses)
-            NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current=None, runtime_archive=archive)
+            NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current=None, runtime_archive=archive)
             upload = next(payload for action, _, payload in adapter.calls if action == 'upload')
             self.assertIsNone(upload['bundle'])
             self.assertEqual(upload['runtimeArtifact']['sha256'], digest)
             archive.write_bytes(b'corrupt')
             adapter = AdapterBoundary(responses)
             with self.assertRaises(ValueError):
-                NasDeploymentManager(adapter).deploy(descriptor, files, operation_id='op', expected_current=None, runtime_archive=archive)
+                NasDeploymentManager(adapter, public_health=lambda _: True).deploy(descriptor, files, operation_id='op', expected_current=None, runtime_archive=archive)
             self.assertEqual([call[0] for call in adapter.calls], ['prepare'])
 
     def test_explicit_code_rollback_sends_contract_and_expected_current(self):
         with tempfile.TemporaryDirectory() as temporary:
             _, descriptor = self.fixture(Path(temporary))
             adapter = AdapterBoundary(self.responses(descriptor))
-            result = NasDeploymentManager(adapter).rollback(descriptor, operation_id='op', expected_current='b' * 64)
+            result = NasDeploymentManager(adapter, public_health=lambda _: True).rollback(descriptor, operation_id='op', expected_current='b' * 64)
             self.assertEqual(result.current, descriptor.digest)
             self.assertEqual(adapter.calls[0][2]['descriptor']['dataContract'], 'example-v1')
             self.assertEqual(adapter.calls[0][2]['expectedCurrent'], 'b' * 64)
@@ -196,7 +336,7 @@ class NasDeploymentTests(unittest.TestCase):
                 + 'json.dump(ack,sys.stdout)\n')
             transport = NasTransport(NasTarget(kind='nas-docker', adapter_command=(sys.executable, str(script))))
             with self.assertRaises(NasPublicationError) as caught:
-                NasDeploymentManager(transport).deploy(descriptor, files, operation_id='original', expected_current=None)
+                NasDeploymentManager(transport, public_health=lambda _: True).deploy(descriptor, files, operation_id='original', expected_current=None)
             self.assertEqual(caught.exception.operation_id, 'original')
             self.assertEqual(caught.exception.release_digest, descriptor.digest)
             self.assertEqual(calls.read_text().splitlines(), ['prepare original', 'activate original', 'status original'])

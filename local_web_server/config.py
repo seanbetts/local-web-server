@@ -878,8 +878,13 @@ def _parse_target(value: Any) -> NasTarget:
     if kind != "nas-docker":
         raise ConfigError("registry.target.kind must be macos or nas-docker")
     fields = {"kind", "adapterCommand", "networkSubnet", "proxyAddress"}
-    _reject_unknown_keys(target, fields, "registry.target")
+    _reject_unknown_keys(target, fields | {"buildContext"}, "registry.target")
     _require_keys(target, fields, "registry.target")
+    build_context = target.get("buildContext")
+    if "buildContext" in target and (type(build_context) is not str or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", build_context
+    )):
+        raise ConfigError("registry.target.buildContext must be a named Mac Docker context")
     adapter = _command(target["adapterCommand"], "registry.target.adapterCommand").argv
     if not Path(adapter[0]).is_absolute() or any(
         any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in argument)
@@ -899,7 +904,7 @@ def _parse_target(value: Any) -> NasTarget:
             raise ValueError
     except (ValueError, TypeError) as error:
         raise ConfigError("NAS target requires a private IPv4 subnet and usable proxy address") from error
-    return NasTarget(kind, adapter, str(network), str(address))
+    return NasTarget(kind, adapter, str(network), str(address), build_context)
 
 
 def _parse_service_link(value: Any) -> ExternalServiceLink:
@@ -1006,6 +1011,8 @@ def load_registry(path: Path) -> HostRegistry:
 
     raw_apps = tuple(_object(app, "app") for app in registry["apps"])
     ids = [_app_id(app.get("id"), "app.id") for app in raw_apps]
+    if target.kind == "nas-docker" and "local-web-platform" in ids:
+        raise ConfigError("app.id local-web-platform is reserved for the NAS platform release")
     if len(set(ids)) != len(ids):
         raise ConfigError("duplicate app id")
     if len(set(ids+[link.id for link in services]))!=len(ids)+len(services):

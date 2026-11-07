@@ -43,6 +43,7 @@ from .host_profile_backup import (
 )
 from .install import load_main_manifests
 from .models import HostRegistry
+from .nas_lifecycle import NasHostDeploymentManager, NasStatusCollector
 from .runtime import DeploymentBusy
 from .service_command_migration import (
     ServiceCommandMigrationError,
@@ -116,9 +117,12 @@ def build_parser(*, _bounded_errors: bool = False) -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     deploy = commands.add_parser("deploy")
     deploy.add_argument("app")
-    deploy.add_argument("--from-hook", action="store_true", help=argparse.SUPPRESS)
+    deployment_mode = deploy.add_mutually_exclusive_group()
+    deployment_mode.add_argument("--from-hook", action="store_true", help=argparse.SUPPRESS)
+    deployment_mode.add_argument('--recover', metavar='OPERATION_ID')
     rollback = commands.add_parser("rollback")
     rollback.add_argument("app")
+    rollback.add_argument('--recover', metavar='OPERATION_ID')
     theme = commands.add_parser("theme")
     theme_commands = theme.add_subparsers(dest="theme_command", required=True)
     theme_commands.add_parser("rollback")
@@ -138,6 +142,7 @@ def build_parser(*, _bounded_errors: bool = False) -> argparse.ArgumentParser:
     data_target.add_argument('--repository', type=Path, default=Path('.'))
     check = app_commands.add_parser("check")
     check.add_argument("--repository", type=Path, default=Path("."))
+    check.add_argument("--target", choices=('macos', 'nas-docker'), default='macos')
     update = app_commands.add_parser("update")
     update.add_argument("--repository", type=Path, default=Path("."))
     update.add_argument("--capability", action="append", default=[])
@@ -328,8 +333,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"{report.app}: compatible")
                 return 0 if report.compatible else 1
             if args.app_command == "check":
-                _load_default_host_profile()
-                report = AppChecker().check(args.repository)
+                if args.target == 'macos':
+                    _load_default_host_profile()
+                    checker = AppChecker()
+                else:
+                    checker = AppChecker(doctor=AppDoctor(target_kind=args.target))
+                report = checker.check(args.repository)
                 print(f"{report.app}: checks passed")
                 return 0
             if args.app_command == "update":
@@ -387,11 +396,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         _registry_path, registry = _load_default_host_profile()
         if args.command == "deploy":
-            result = DeploymentManager(registry).deploy(args.app, from_hook=args.from_hook)
+            manager = NasHostDeploymentManager(registry) if registry.target.kind == 'nas-docker' else DeploymentManager(registry)
+            if args.recover is not None:
+                if registry.target.kind != 'nas-docker':
+                    raise ValueError('original NAS operation recovery requires the NAS target')
+                result = manager.recover(args.app, args.recover)
+            else:
+                result = manager.deploy(args.app, from_hook=args.from_hook)
             print(result.message)
             return 0
         if args.command == "rollback":
-            result = DeploymentManager(registry).rollback(args.app)
+            manager = NasHostDeploymentManager(registry) if registry.target.kind == 'nas-docker' else DeploymentManager(registry)
+            if args.recover is not None:
+                if registry.target.kind != 'nas-docker':
+                    raise ValueError('original NAS operation recovery requires the NAS target')
+                result = manager.recover(args.app, args.recover)
+            else:
+                result = manager.rollback(args.app)
             print(result.message)
             return 0
         if args.command == "theme":
@@ -403,7 +424,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"platform theme rolled back to {digest}")
             return 0
 
-        collector = StatusCollector(registry)
+        collector = NasStatusCollector(registry) if registry.target.kind == 'nas-docker' else StatusCollector(registry)
         statuses = collector.collect()
         if collector.caddy_state is None:
             raise ValueError("Caddy state was not collected")

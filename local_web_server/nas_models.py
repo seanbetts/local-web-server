@@ -8,6 +8,7 @@ class NasTarget:
     adapter_command: tuple[str, ...] = ()
     network_subnet: str | None = None
     proxy_address: str | None = None
+    build_context: str | None = None
 
 
 @dataclass(frozen=True)

@@ -59,6 +59,13 @@ backup, the retry creates/revalidates the backup without another revision.
 
 ### Configure a complete schema-3 profile
 
+A NAS target may declare `buildContext`, the name of the Docker context used
+for Linux dependency builds on the Mac. A service cache miss requires this
+explicit context; no ambient Docker context is selected. Its endpoint must be
+a local Unix socket. Native frontend builds and warm dependency cache reads
+do not require a Linux image build. `local-web-platform` is reserved for the
+platform release and cannot be registered as a NAS app.
+
 Prepare a private mode-`0600` registry file containing the complete schema-3
 profile, including its explicit `target` and service links. Preview does not
 write any profile, revision or backup:

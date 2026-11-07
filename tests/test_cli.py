@@ -541,6 +541,42 @@ class CliTests(unittest.TestCase):
         load_registry.assert_called_once_with(_PRIVATE_HOST_PROFILE_BYTES)
         self.host_profile_resolver.assert_called_once_with(_PLATFORM_REPOSITORY)
 
+    @patch("local_web_server.cli.NasHostDeploymentManager")
+    @patch("local_web_server.cli.DeploymentManager")
+    def test_nas_deploy_and_original_recovery_never_construct_mac_manager(self, mac, nas):
+        self.registry_loader.return_value = SimpleNamespace(target=SimpleNamespace(kind='nas-docker'))
+        nas.return_value.deploy.return_value = DeploymentResult('example', 'a'*40, 'deployed', 'example deployed on NAS', None)
+        nas.return_value.recover.return_value = DeploymentResult('example', 'a'*40, 'deployed', 'example recovered on NAS', None)
+        code, stdout, stderr = self.run_main(['deploy', 'example'])
+        self.assertEqual((code, stdout, stderr), (0, 'example deployed on NAS\n', ''))
+        nas.return_value.deploy.assert_called_once_with('example', from_hook=False)
+        code, stdout, stderr = self.run_main(['deploy', 'example', '--recover', 'original'])
+        self.assertEqual((code, stdout, stderr), (0, 'example recovered on NAS\n', ''))
+        nas.return_value.recover.assert_called_once_with('example', 'original')
+        mac.assert_not_called()
+
+    @patch("local_web_server.cli.NasHostDeploymentManager")
+    @patch("local_web_server.cli.DeploymentManager")
+    def test_nas_rollback_never_constructs_mac_manager(self, mac, nas):
+        self.registry_loader.return_value = SimpleNamespace(target=SimpleNamespace(kind='nas-docker'))
+        nas.return_value.rollback.return_value = DeploymentResult('example', 'a'*40, 'rolled-back', 'example rolled back on NAS', None)
+        self.assertEqual(self.run_main(['rollback', 'example']), (0, 'example rolled back on NAS\n', ''))
+        nas.return_value.rollback.assert_called_once_with('example')
+        mac.assert_not_called()
+
+    @patch("local_web_server.cli.NasStatusCollector")
+    @patch("local_web_server.cli.StatusCollector")
+    def test_nas_status_uses_only_remote_collector(self, mac, nas):
+        self.registry_loader.return_value = SimpleNamespace(target=SimpleNamespace(kind='nas-docker'))
+        nas.return_value.caddy_state = ServiceState.RUNNING
+        nas.return_value.collect.return_value = (FakeStatus(backend=None),)
+        code, stdout, stderr = self.run_main(['status'])
+        self.assertEqual(code, 0)
+        self.assertIn('frontend=OK backend=-', stdout)
+        self.assertEqual(stderr, '')
+        nas.return_value.collect.assert_called_once()
+        mac.assert_not_called()
+
     @patch("local_web_server.cli.load_registry_bytes")
     @patch("local_web_server.cli.DeploymentManager")
     def test_rendered_hook_deploy_invocation_forwards_hook_context(self, manager, load_registry):
@@ -1820,6 +1856,20 @@ class CliTests(unittest.TestCase):
         checker.return_value.check.assert_called_once_with(Path("/tmp/recipes"))
         self.registry_loader.assert_called_once_with(_PRIVATE_HOST_PROFILE_BYTES)
         self.host_profile_resolver.assert_called_once_with(_PLATFORM_REPOSITORY)
+
+    @patch("local_web_server.cli.AppDoctor")
+    @patch("local_web_server.cli.AppChecker")
+    def test_explicit_nas_source_check_uses_nas_doctor_without_a_private_host_profile(self, checker, doctor):
+        checker.return_value.check.return_value = DoctorReport("recipes", True, ())
+        code, stdout, stderr = self.run_main(
+            ["app", "check", "--repository", "/tmp/recipes", "--target", "nas-docker"]
+        )
+        self.assertEqual((code, stdout, stderr), (0, "recipes: checks passed\n", ""))
+        doctor.assert_called_once_with(target_kind="nas-docker")
+        checker.assert_called_once_with(doctor=doctor.return_value)
+        checker.return_value.check.assert_called_once_with(Path("/tmp/recipes"))
+        self.host_profile_resolver.assert_not_called()
+        self.registry_loader.assert_not_called()
 
     @patch("local_web_server.cli.load_registry_bytes")
     @patch("local_web_server.theme.ThemeStore")
