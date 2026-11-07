@@ -35,7 +35,9 @@ class MacDockerDependencyBuilder:
         if type(context) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', context):
             raise ValueError('an explicit local Docker context name is required')
         self.context, self.cache_root = context, Path(cache_root)
-        self.runner = runner or ProcessRunner(timeout_seconds=1200)
+        # Cold scientific-wheel downloads exceeded twenty minutes on the
+        # measured isolated Mac VM; warm builds never invoke this installer.
+        self.runner = runner or ProcessRunner(timeout_seconds=3600)
         self.inspect_context = inspect_context
         self.docker_executable, self.plugin_directory = docker_executable, plugin_directory
 

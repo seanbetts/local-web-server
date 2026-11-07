@@ -65,6 +65,11 @@ class FileEntry:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeIdentity:
+    """Image config content identity plus an optional verified manifest candidate.
+
+    Docker engines may address a loaded image by either identity. Neither value
+    certifies that the image is present or runnable without engine readback.
+    """
     image_digest: str
     dependency_digest: str
     os: str
@@ -72,9 +77,11 @@ class RuntimeIdentity:
     abi: str
     lockfile_digest: str
     recipe_version: str
+    manifest_digest: str | None = None
 
     def __post_init__(self) -> None:
-        if (any(type(value) is not str or not _IMAGE.fullmatch(value)
+        if (self.manifest_digest is not None and (type(self.manifest_digest) is not str or not _IMAGE.fullmatch(self.manifest_digest))
+                or any(type(value) is not str or not _IMAGE.fullmatch(value)
                 for value in (self.image_digest, self.dependency_digest))
                 or type(self.lockfile_digest) is not str
                 or not _SHA256.fullmatch(self.lockfile_digest)
@@ -83,17 +90,28 @@ class RuntimeIdentity:
             raise ValueError('invalid runtime identity')
 
     def to_dict(self) -> dict[str, str]:
-        return dict(imageDigest=self.image_digest, dependencyDigest=self.dependency_digest,
+        result = dict(imageDigest=self.image_digest, dependencyDigest=self.dependency_digest,
                     os=self.os, architecture=self.architecture, abi=self.abi,
                     lockfileDigest=self.lockfile_digest, recipeVersion=self.recipe_version)
+        if self.manifest_digest is not None:
+            result['manifestDigest'] = self.manifest_digest
+        return result
 
     @classmethod
     def from_dict(cls, value: object) -> RuntimeIdentity:
-        value = _keys(value, {'imageDigest', 'dependencyDigest', 'os', 'architecture',
-                             'abi', 'lockfileDigest', 'recipeVersion'})
+        required = {'imageDigest', 'dependencyDigest', 'os', 'architecture', 'abi', 'lockfileDigest', 'recipeVersion'}
+        if type(value) is not dict or not required <= set(value) or set(value) - required - {'manifestDigest'}:
+            raise ValueError('invalid runtime identity fields')
+        if 'manifestDigest' in value and value['manifestDigest'] is None:
+            raise ValueError('manifest digest must be omitted when unavailable')
         return cls(value['imageDigest'], value['dependencyDigest'], value['os'],
                    value['architecture'], value['abi'], value['lockfileDigest'],
-                   value['recipeVersion'])
+                   value['recipeVersion'], value.get('manifestDigest'))
+
+
+def candidate_image_references(identity: RuntimeIdentity) -> tuple[str, ...]:
+    """Return verified config/manifest candidates; callers still inspect the engine."""
+    return tuple(dict.fromkeys(value for value in (identity.image_digest, identity.manifest_digest) if value is not None))
 
 
 @dataclass(frozen=True, slots=True)

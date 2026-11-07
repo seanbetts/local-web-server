@@ -82,7 +82,7 @@ class CachedDependency:
             raise ValueError('cached dependency archive changed')
         return RuntimeIdentity(verified.image_digest, 'sha256:' + self.digest,
             self.key.os, self.key.architecture, self.key.abi,
-            self.key.lockfile_digest, self.key.recipe_version)
+            self.key.lockfile_digest, self.key.recipe_version, verified.manifest_digest)
 
 
 def _hash_file(path: Path) -> str:
@@ -104,14 +104,43 @@ class VerifiedDockerArchive:
     os: str
     architecture: str
     archive_digest: str
+    manifest_digest: str | None = None
+
+
+def _unique_json(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate Docker metadata field")
+        result[name] = value
+    return result
+
+
+def _reject_json_constant(_):
+    raise ValueError("invalid Docker metadata constant")
+
+
+def _reserved_image_tag(value):
+    if type(value) is not str or not re.fullmatch(r"local-web-runtime:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", value):
+        raise ValueError("saved image aliases must use the reserved local-web-runtime namespace")
+
+
+def _validate_image_annotations(value):
+    if type(value) is not dict or any(type(item) is not str for item in value.values()):
+        raise ValueError("invalid saved image annotations")
+    for name in ("org.opencontainers.image.ref.name", "io.containerd.image.name"):
+        if name in value:
+            _reserved_image_tag(value[name])
 
 
 def verify_docker_archive(path: Path, *, maximum_layer_bytes: int = 4 * 1024**3,
                           maximum_total_layer_bytes: int = 16 * 1024**3) -> VerifiedDockerArchive:
     """Verify a single Linux/amd64 Docker-save image and its raw or gzip layers.
 
-    The runnable image ID is the config JSON SHA, independent of the pinned
-    base-image ID and of the archive transport checksum. Layer diff IDs hash
+    The config SHA is logical content identity, not a universally runnable
+    Docker reference. A verified optional index manifest supplies a second
+    engine candidate; engines must inspect candidates after load. Both differ
+    from the base-image pin and archive transport checksum. Layer diff IDs hash
     uncompressed bytes; gzip transport bytes are streamed with expansion bounds.
     OCI-only layouts and zstd layers remain unsupported by this contract.
     This inspection does not replace starting the image in an isolated runtime.
@@ -147,7 +176,7 @@ def verify_docker_archive(path: Path, *, maximum_layer_bytes: int = 4 * 1024**3,
                     content = stream.read()
                 if len(content) != members[name].size:
                     raise ValueError('Docker-save metadata is truncated')
-                return content, json.loads(content)
+                return content, json.loads(content, object_pairs_hook=_unique_json, parse_constant=_reject_json_constant)
 
             _, manifest = metadata('manifest.json')
             if (type(manifest) is not list or len(manifest) != 1
@@ -156,6 +185,21 @@ def verify_docker_archive(path: Path, *, maximum_layer_bytes: int = 4 * 1024**3,
                     or set(manifest[0]) - {'Config', 'Layers', 'RepoTags'}):
                 raise ValueError('a single Docker-save image is required; OCI layouts are unsupported')
             image = manifest[0]
+            tags = image.get('RepoTags')
+            if tags is not None:
+                if type(tags) is not list or len(tags) > 64 or any(type(tag) is not str for tag in tags) or len(tags) != len(set(tags)):
+                    raise ValueError('saved image aliases must be unique bounded tags')
+                for tag in tags:
+                    _reserved_image_tag(tag)
+            if 'repositories' in members:
+                _, repositories = metadata('repositories')
+                if type(repositories) is not dict:
+                    raise ValueError('invalid legacy image aliases')
+                for repository, repository_tags in repositories.items():
+                    if type(repository_tags) is not dict:
+                        raise ValueError('invalid legacy image aliases')
+                    for tag in repository_tags:
+                        _reserved_image_tag(repository + ':' + tag)
             config_path = image['Config']
             layers = image['Layers']
             if type(config_path) is not str or type(layers) is not list or any(type(name) is not str for name in layers):
@@ -171,11 +215,16 @@ def verify_docker_archive(path: Path, *, maximum_layer_bytes: int = 4 * 1024**3,
             if type(rootfs) is not dict or rootfs.get('type') != 'layers' or type(rootfs.get('diff_ids')) is not list or len(rootfs['diff_ids']) != len(layers):
                 raise ValueError('Docker-save rootfs does not match its layers')
             total_expanded = 0
+            stored_layers = []
             for name, expected in zip(layers, rootfs['diff_ids']):
                 validate_relative_path(name)
                 if (type(expected) is not str or not re.fullmatch(r'sha256:[0-9a-f]{64}', expected)
                         or name not in members or not members[name].isfile()):
                     raise ValueError('Docker-save layer is missing or invalid')
+                stored_digest = hashlib.sha256()
+                with archive.extractfile(members[name]) as stored:
+                    while chunk := stored.read(1024 * 1024):
+                        stored_digest.update(chunk)
                 digest = hashlib.sha256()
                 count = 0
                 with archive.extractfile(members[name]) as raw:
@@ -203,9 +252,68 @@ def verify_docker_archive(path: Path, *, maximum_layer_bytes: int = 4 * 1024**3,
                             stream.close()
                 if (not compressed and count != members[name].size) or 'sha256:' + digest.hexdigest() != expected:
                     raise ValueError('Docker-save uncompressed layer checksum mismatch')
+                stored_layers.append(('sha256:' + stored_digest.hexdigest(), members[name].size, compressed))
+            manifest_digest = None
+            if 'index.json' in members:
+                _, index = metadata('index.json')
+                if (type(index) is not dict or type(index.get('schemaVersion')) is not int or index['schemaVersion'] != 2
+                        or index.get('mediaType') not in (None, 'application/vnd.oci.image.index.v1+json', 'application/vnd.docker.distribution.manifest.list.v2+json')
+                        or type(index.get('manifests')) is not list or len(index['manifests']) != 1):
+                    raise ValueError('Docker-save index must select one verified image manifest')
+                if 'annotations' in index:
+                    _validate_image_annotations(index['annotations'])
+                reference = index['manifests'][0]
+                supported_manifests = ('application/vnd.docker.distribution.manifest.v2+json', 'application/vnd.oci.image.manifest.v1+json')
+                if type(reference) is not dict or reference.get('mediaType') not in supported_manifests:
+                    raise ValueError('unsupported Docker-save index manifest')
+                if 'annotations' in reference:
+                    _validate_image_annotations(reference['annotations'])
+                if 'platform' in reference and (type(reference['platform']) is not dict
+                        or (reference['platform'].get('os'), reference['platform'].get('architecture')) != ('linux', 'amd64')):
+                    raise ValueError('Docker-save index platform disagrees with the Linux/amd64 config')
+
+                def descriptor_blob(value, expected_digest=None, expected_size=None):
+                    if (type(value) is not dict or type(value.get('digest')) is not str
+                            or not re.fullmatch(r'sha256:[0-9a-f]{64}', value['digest'])
+                            or type(value.get('size')) is not int or value['size'] < 0):
+                        raise ValueError('invalid Docker-save manifest blob descriptor')
+                    if (expected_digest is not None and value['digest'] != expected_digest
+                            or expected_size is not None and value['size'] != expected_size):
+                        raise ValueError('Docker-save index and legacy image graph disagree')
+                    name = 'blobs/sha256/' + value['digest'][7:]
+                    if name not in members or not members[name].isfile() or members[name].size != value['size']:
+                        raise ValueError('Docker-save manifest blob is missing or has the wrong size')
+                    digest = hashlib.sha256()
+                    with archive.extractfile(members[name]) as stream:
+                        while chunk := stream.read(1024 * 1024):
+                            digest.update(chunk)
+                    if 'sha256:' + digest.hexdigest() != value['digest']:
+                        raise ValueError('Docker-save manifest blob checksum mismatch')
+                    return name
+
+                manifest_path = descriptor_blob(reference)
+                _, selected = metadata(manifest_path)
+                if (type(selected) is not dict or type(selected.get('schemaVersion')) is not int or selected['schemaVersion'] != 2
+                        or selected.get('mediaType') not in (None, reference['mediaType'])
+                        or type(selected.get('layers')) is not list or len(selected['layers']) != len(layers)):
+                    raise ValueError('Docker-save manifest and legacy image graph disagree')
+                if 'annotations' in selected:
+                    _validate_image_annotations(selected['annotations'])
+                selected_config = selected.get('config')
+                if type(selected_config) is not dict or selected_config.get('mediaType') not in (
+                        'application/vnd.docker.container.image.v1+json', 'application/vnd.oci.image.config.v1+json'):
+                    raise ValueError('invalid Docker-save manifest config type')
+                descriptor_blob(selected_config, 'sha256:' + config_sha, len(config_bytes))
+                for selected_layer, (stored_digest, stored_size, compressed) in zip(selected['layers'], stored_layers):
+                    supported_layers = (('application/vnd.docker.image.rootfs.diff.tar.gzip', 'application/vnd.oci.image.layer.v1.tar+gzip') if compressed else
+                                        ('application/vnd.docker.image.rootfs.diff.tar', 'application/vnd.oci.image.layer.v1.tar'))
+                    if type(selected_layer) is not dict or selected_layer.get('mediaType') not in supported_layers:
+                        raise ValueError('Docker-save manifest layer type disagrees with its stored bytes')
+                    descriptor_blob(selected_layer, stored_digest, stored_size)
+                manifest_digest = reference['digest']
         if _hash_file(path) != archive_digest:
             raise ValueError('Docker-save archive changed during verification')
-        return VerifiedDockerArchive('sha256:' + config_sha, 'linux', 'amd64', archive_digest)
+        return VerifiedDockerArchive('sha256:' + config_sha, 'linux', 'amd64', archive_digest, manifest_digest)
     except (OSError, EOFError, zlib.error, tarfile.TarError, UnicodeError, json.JSONDecodeError, RecursionError) as error:
         raise ValueError('invalid Docker-save archive') from error
 

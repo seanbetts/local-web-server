@@ -27,7 +27,7 @@ def docker_archive(path, label='prepared', *, architecture='amd64', os_name='lin
         config=dict(Cmd=['/bin/true'], Labels={'fixture': label}),
         rootfs=dict(type='layers', diff_ids=['sha256:' + hashlib.sha256(body).hexdigest() for body in bodies])), sort_keys=True).encode()
     digest = hashlib.sha256(config).hexdigest()
-    manifest = json.dumps([dict(Config=digest + '.json', RepoTags=['local-web:prepared'],
+    manifest = json.dumps([dict(Config=digest + '.json', RepoTags=['local-web-runtime:prepared'],
         Layers=names)]).encode()
     with tarfile.open(path, 'w') as archive:
         for name, body in ((digest + '.json', config), ('manifest.json', manifest)):
@@ -50,7 +50,133 @@ def docker_archive(path, label='prepared', *, architecture='amd64', os_name='lin
     return 'sha256:' + digest
 
 
+def indexed_docker_archive(path, *, compression='gzip', manifest_changes=None,
+                           index_changes=None, legacy_tags=None, include_platform=True):
+    config_id = docker_archive(path, layer_body=b'prepared Linux layer', compression=compression)
+    with tarfile.open(path) as archive:
+        files = {member.name: archive.extractfile(member).read() for member in archive if member.isfile()}
+    legacy = json.loads(files['manifest.json'])[0]
+    config = files[legacy['Config']]
+    config_path = 'blobs/sha256/' + config_id.split(':', 1)[1]
+    files[config_path] = config
+    legacy['Config'] = config_path
+    layers = []
+    for name in legacy['Layers']:
+        body = files.pop(name)
+        digest = hashlib.sha256(body).hexdigest()
+        blob = 'blobs/sha256/' + digest
+        files[blob] = body
+        layers.append(dict(mediaType='application/vnd.docker.image.rootfs.diff.tar.gzip' if compression == 'gzip' else 'application/vnd.docker.image.rootfs.diff.tar',
+                           digest='sha256:' + digest, size=len(body)))
+    legacy['Layers'] = ['blobs/sha256/' + entry['digest'].split(':', 1)[1] for entry in layers]
+    legacy['RepoTags'] = legacy_tags
+    files['manifest.json'] = json.dumps([legacy]).encode()
+    manifest = dict(schemaVersion=2, mediaType='application/vnd.docker.distribution.manifest.v2+json',
+                    config=dict(mediaType='application/vnd.docker.container.image.v1+json', digest=config_id, size=len(config)), layers=layers)
+    if manifest_changes:
+        manifest_changes(manifest)
+    body = json.dumps(manifest, sort_keys=True).encode()
+    manifest_id = 'sha256:' + hashlib.sha256(body).hexdigest()
+    files['blobs/sha256/' + manifest_id.split(':', 1)[1]] = body
+    reference = dict(mediaType=manifest['mediaType'], digest=manifest_id, size=len(body))
+    if include_platform:
+        reference['platform'] = dict(os='linux', architecture='amd64')
+    index = dict(schemaVersion=2, mediaType='application/vnd.oci.image.index.v1+json', manifests=[reference])
+    if index_changes:
+        index_changes(index)
+    files['index.json'] = json.dumps(index).encode()
+    with tarfile.open(path, 'w') as archive:
+        for name, body in files.items():
+            info = tarfile.TarInfo(name); info.size=len(body)
+            archive.addfile(info, io.BytesIO(body))
+    return config_id, manifest_id
+
+
+def rewrite_archive(path, mutate):
+    with tarfile.open(path) as archive:
+        files = {member.name: archive.extractfile(member).read() for member in archive if member.isfile()}
+    mutate(files)
+    with tarfile.open(path, 'w') as archive:
+        for name, body in files.items():
+            info = tarfile.TarInfo(name); info.size = len(body)
+            archive.addfile(info, io.BytesIO(body))
+
+
 class ProductionBuildTests(unittest.TestCase):
+    def test_indexed_buildx_archive_binds_both_config_and_manifest_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'image.tar'
+            for platform in (True, False):
+                config_id, manifest_id = indexed_docker_archive(path, include_platform=platform)
+                verified = verify_docker_archive(path)
+                self.assertEqual(verified.image_digest, config_id)
+                self.assertEqual(verified.manifest_digest, manifest_id)
+                self.assertEqual(verified.archive_digest, hashlib.sha256(path.read_bytes()).hexdigest())
+                cache = DependencyCache(Path(temporary) / ('cache' + str(platform)))
+                def install(target):
+                    target.write_bytes(path.read_bytes())
+                identity = cache.prepare(self.key(), install).runtime_identity()
+                self.assertEqual(identity.manifest_digest, manifest_id)
+                self.assertEqual(identity.image_digest, config_id)
+            docker_archive(path)
+            self.assertIsNone(verify_docker_archive(path).manifest_digest)
+
+    def test_index_hash_size_platform_and_legacy_graph_disagreement_fail_before_load(self):
+        cases = (
+            ({}, lambda value: value['manifests'][0].update(size=1)),
+            ({}, lambda value: value['manifests'][0].update(digest='sha256:' + 'a' * 64)),
+            ({}, lambda value: value['manifests'][0].update(platform=dict(os='linux', architecture='arm64'))),
+            ({}, lambda value: value['manifests'].append(value['manifests'][0])),
+            ({'manifest_changes': lambda value: value['config'].update(digest='sha256:' + 'a' * 64)}, None),
+            ({'manifest_changes': lambda value: value['config'].update(size=1)}, None),
+            ({'manifest_changes': lambda value: value['layers'][0].update(digest='sha256:' + 'a' * 64)}, None),
+            ({'manifest_changes': lambda value: value['layers'][0].update(size=1)}, None),
+            ({'manifest_changes': lambda value: value.update(layers=[])}, None),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'image.tar'
+            for index, (changes, mutate_index) in enumerate(cases):
+                indexed_docker_archive(path, **changes, index_changes=mutate_index)
+                with self.subTest(case=index), self.assertRaises(ValueError):
+                    verify_docker_archive(path)
+
+    def test_archive_rejects_tampered_manifest_bytes_and_noncanonical_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'image.tar'
+            _, manifest_id = indexed_docker_archive(path, manifest_changes=lambda value: value.update(annotations={'fixture': 'a'}))
+            blob = 'blobs/sha256/' + manifest_id.split(':', 1)[1]
+            rewrite_archive(path, lambda files: files.update({blob: files[blob].replace(b'"fixture": "a"', b'"fixture": "b"')}))
+            with self.assertRaises(ValueError):
+                verify_docker_archive(path)
+            indexed_docker_archive(path)
+            rewrite_archive(path, lambda files: files.update({'index.json': files['index.json'].replace(
+                b'"schemaVersion": 2', b'"schemaVersion": 2, "schemaVersion": 2')}))
+            with self.assertRaises(ValueError):
+                verify_docker_archive(path)
+            docker_archive(path, label=float('nan'))
+            with self.assertRaises(ValueError):
+                verify_docker_archive(path)
+            docker_archive(path)
+            rewrite_archive(path, lambda files: files.update({'repositories': b'{"jellyfin":{"latest":"foreign"}}'}))
+            with self.assertRaises(ValueError):
+                verify_docker_archive(path)
+
+    def test_archive_cannot_retag_foreign_images_during_load(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'image.tar'
+            for tags in (['jellyfin:latest'], ['registry.example/local-web-runtime:tag'], ['local-web-runtime:bad tag'], ['local-web-runtime:tag'] * 2):
+                indexed_docker_archive(path, legacy_tags=tags)
+                with self.subTest(tags=tags), self.assertRaises(ValueError):
+                    verify_docker_archive(path)
+            for tags in (None, [], ['local-web-runtime:fixture']):
+                indexed_docker_archive(path, legacy_tags=tags)
+                verify_docker_archive(path)
+            for alias_field in ('org.opencontainers.image.ref.name', 'io.containerd.image.name'):
+                indexed_docker_archive(path, index_changes=lambda value: value['manifests'][0].update(
+                    annotations={alias_field: 'jellyfin:latest'}))
+                with self.subTest(alias=alias_field), self.assertRaises(ValueError):
+                    verify_docker_archive(path)
+
     def test_exact_export_never_runs_checkout_hooks_or_copies_their_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from local_web_server.release_manifest import (
-    FileEntry, ReleaseDescriptorV1, RuntimeIdentity, plan_transfer, snapshot_files,
+    FileEntry, ReleaseDescriptorV1, RuntimeIdentity, plan_transfer, snapshot_files, candidate_image_references,
 )
 
 
@@ -23,6 +23,22 @@ class ReleaseManifestTests(unittest.TestCase):
                       lockfile_digest='d' * 64, recipe_version='1')
         values.update(kwargs)
         return RuntimeIdentity(**values)
+
+    def test_runtime_optional_manifest_identity_preserves_old_records_and_orders_candidates(self):
+        legacy = self.runtime()
+        self.assertNotIn('manifestDigest', legacy.to_dict())
+        self.assertEqual(RuntimeIdentity.from_dict(legacy.to_dict()), legacy)
+        self.assertEqual(candidate_image_references(legacy), ('sha256:' + 'b' * 64,))
+        portable = self.runtime(manifest_digest='sha256:' + 'e' * 64)
+        self.assertEqual(portable.to_dict()['manifestDigest'], 'sha256:' + 'e' * 64)
+        self.assertEqual(RuntimeIdentity.from_dict(portable.to_dict()), portable)
+        self.assertEqual(candidate_image_references(portable), ('sha256:' + 'b' * 64, 'sha256:' + 'e' * 64))
+        self.assertNotEqual(self.descriptor(runtime=portable).digest, self.descriptor(runtime=legacy).digest)
+        for invalid in (None, '', 'e' * 64, True):
+            payload = legacy.to_dict() | {'manifestDigest': invalid}
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                RuntimeIdentity.from_dict(payload)
+        self.assertEqual(candidate_image_references(self.runtime(manifest_digest='sha256:' + 'b' * 64)), ('sha256:' + 'b' * 64,))
 
     def test_snapshot_records_exact_bytes_mode_and_sorted_paths(self):
         with tempfile.TemporaryDirectory() as directory:
