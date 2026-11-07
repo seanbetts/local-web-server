@@ -1,15 +1,19 @@
-"""Unsupported NAS lifecycle routes must stop before local effects."""
+"""NAS dispatch must never substitute Mac services, pointers or theme state."""
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from local_web_server.app_activation import AppActivator, AppActivationError
+from local_web_server.app_activation import AppActivator
 from local_web_server.cli import main
 from local_web_server.fleet_update import FleetUpdater
-from local_web_server.models import HostRegistry
+from local_web_server.fleet_update_models import FleetAppPlan
+from local_web_server.models import HostApp, HostRegistry
 from local_web_server.nas_models import NasTarget
+from local_web_server.nas_transport import NasTransportError
 
 
 class NasMacosGuardsTests(unittest.TestCase):
@@ -18,33 +22,55 @@ class NasMacosGuardsTests(unittest.TestCase):
             schema_version=3, public_origin='https://local.example.ts.net', ingress_mode='tailscale-serve',
             target=NasTarget('nas-docker', ('/usr/local/bin/adapter',), '172.30.200.0/24', '172.30.200.2'))
 
-    def test_activation_stops_before_source_inspection_profile_or_service_effects(self):
-        activator = object.__new__(AppActivator)
-        activator.registry_path = Path('/private/profile.json')
-        activator.platform_repository = Path('/private/framework')
-        activator.profile_store = Mock()
-        activator.registrar = Mock()
-        activator.install = Mock()
-        with patch('local_web_server.app_activation.load_registry', return_value=self.registry), \
-             patch('local_web_server.app_activation.require_committed_installation_sources') as inspect:
-            with self.assertRaisesRegex(AppActivationError, 'NAS'):
-                activator.preview(Path('/missing/app'))
-        inspect.assert_not_called()
-        self.assertEqual(activator.profile_store.mock_calls, [])
-        self.assertEqual(activator.registrar.mock_calls, [])
-        activator.install.assert_not_called()
+    def test_activation_selects_nas_deployer_and_does_not_construct_mac_fallback(self):
+        with tempfile.TemporaryDirectory() as text:
+            root = Path(text)
+            before = {path.name for path in root.iterdir()}
+            with patch('local_web_server.app_activation.HostProfilePaths.for_repository'):
+                activator = AppActivator(platform_repository=root, registry_path=root/'profile.json',
+                                         profile_store=Mock())
+            unavailable = NasTransportError('status', 'original', outcome_unknown=True)
+            with patch('local_web_server.app_activation.NasHostDeploymentManager') as nas, \
+                 patch('local_web_server.app_activation.DeploymentManager') as mac, \
+                 patch('local_web_server.deploy.LaunchctlServiceController') as services, \
+                 patch('local_web_server.deploy.RuntimeLayout') as layout:
+                nas.return_value.deploy.side_effect = unavailable
+                selected = activator.deployer_factory(self.registry)
+                self.assertIs(selected, nas.return_value)
+                with self.assertRaises(NasTransportError): selected.deploy('notes')
+            nas.assert_called_once_with(self.registry)
+            mac.assert_not_called()
+            services.assert_not_called()
+            layout.assert_not_called()
+            self.assertEqual({path.name for path in root.iterdir()}, before)
 
-    def test_fleet_stops_before_local_pointer_inspection_or_app_updates(self):
-        updater = FleetUpdater()
-        with patch('local_web_server.fleet_update.load_registry', return_value=self.registry), \
-             patch.object(updater, '_preview_app') as app_preview:
-            with self.assertRaisesRegex(ValueError, 'NAS'):
-                updater.apply(Path('/private/profile.json'))
-        app_preview.assert_not_called()
+    def test_fleet_selects_remote_inspector_without_mac_pointers_or_app_effects(self):
+        host = HostApp('notes', Path('/unavailable/notes'), False, None, (), None, None)
+        registry = replace(self.registry, apps=(host,))
+        update = Mock()
+        updater = FleetUpdater(updater_factory=update)
+        blocked = FleetAppPlan('notes', 'BLOCKED', None, None, None, None, None, (),
+                               'live-release-unavailable', host.repository, None)
+        profile = Path('/private/profile.json')
+        with patch('local_web_server.fleet_update.load_registry', return_value=registry), \
+             patch('local_web_server.fleet_update.NasLiveReleaseInspector') as nas, \
+             patch('local_web_server.fleet_update.RuntimeLiveReleaseInspector') as mac, \
+             patch('local_web_server.deploy.LaunchctlServiceController') as services, \
+             patch.object(updater, '_preview_app', return_value=blocked) as app_preview:
+            result = updater.apply(profile)
+            self.assertIs(updater._live_inspector, nas.return_value)
+        nas.assert_called_once_with(registry)
+        mac.assert_not_called()
+        services.assert_not_called()
+        update.assert_not_called()
+        app_preview.assert_called_once_with(host, profile, registry.runtime_root)
+        self.assertEqual(result.apps[0].status, 'BLOCKED')
 
     def test_theme_rollback_refuses_nas_before_local_theme_store(self):
         output, error = io.StringIO(), io.StringIO()
-        with patch('local_web_server.cli._load_default_host_profile', return_value=(Path('/private/profile.json'), self.registry)), \
+        snapshot = Mock(profile_bytes=b'private fixture', revisions=())
+        with patch('local_web_server.cli._load_default_host_profile_snapshot',
+                   return_value=(Path('/private/profile.json'), self.registry, snapshot)), \
              patch('local_web_server.theme.ThemeStore') as store, redirect_stdout(output), redirect_stderr(error):
             code = main(['theme', 'rollback'])
         self.assertEqual(code, 2)
