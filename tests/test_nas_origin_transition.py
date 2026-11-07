@@ -19,11 +19,13 @@ class OriginTransitionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()/'historical'; self.root.mkdir(mode=0o700)
         self.destination = Path(self.temp.name).resolve()/'production'
-        self.source = HostRegistry('shadow.example.ts.net', Path('/volume2/docker/local-web'), (),
-            schema_version=3, public_origin='https://shadow.example.ts.net', ingress_mode='tailscale-serve',
+        public_origin='https://local.example.ts.net'
+        shadow_origin=public_origin.replace('://local.', '://shadow.', 1)
+        self.source = HostRegistry(shadow_origin.removeprefix('https://'), Path('/volume2/docker/local-web'), (),
+            schema_version=3, public_origin=shadow_origin, ingress_mode='tailscale-serve',
             target=NasTarget('nas-docker', ('/fixed/adapter',), '172.30.200.0/24', '172.30.200.2'))
-        self.target = replace(self.source, host='local.example.ts.net', public_origin='https://local.example.ts.net')
-        self.prepared = self.prepared_origin('https://local.example.ts.net')
+        self.target = replace(self.source, host=public_origin.removeprefix('https://'), public_origin=public_origin)
+        self.prepared = self.prepared_origin(public_origin)
         self.context = SavedNasInstallationContext(self.source.public_origin, '172.30.200.0/24', '172.30.200.2',
             'caddy@sha256:'+'a'*64, 'tailscale@sha256:'+'b'*64, (), HostnameHandoff('local','mac-retained','shadow'), (),
             (('c'*64,'d'*64),))
@@ -61,8 +63,8 @@ class OriginTransitionTests(unittest.TestCase):
         self.assertEqual(plan.to_dict()['apps'], {})
         self.assertEqual(plan.to_dict()['sourceContext'], self.context.to_dict())
         self.assertEqual(plan.next_context.public_origin, self.target.public_origin)
-        for registry in (replace(self.target, public_origin='https://mac-retained.example.ts.net'),
-                         replace(self.target, public_origin='https://local.other.ts.net'),
+        for registry in (replace(self.target, public_origin=self.target.public_origin.replace('://local.', '://mac-retained.', 1)),
+                         replace(self.target, public_origin=self.target.public_origin.replace('.example.', '.other.', 1)),
                          replace(self.target, target=replace(self.target.target, adapter_command=('/other',))),
                          replace(self.target, apps=(object(),))):
             with self.assertRaises(ValueError): self.plan(destination_registry=registry)
