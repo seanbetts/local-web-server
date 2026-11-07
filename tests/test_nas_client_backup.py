@@ -286,3 +286,63 @@ class ClientBackupTests(StoreFixture):
         with patch.object(tarfile.TarInfo,'_proc_gnulong',side_effect=AssertionError('nested extension parser entered')) as parser:
             with self.assertRaises(NasClientBackupError):self.write()
             parser.assert_not_called()
+
+    def origin_transition(self, complete=True):
+        from tests.test_nas_origin_transition import OriginTransitionTests
+        from local_web_server.nas_origin_transition import NasOriginTransitionSession
+        fixture=OriginTransitionTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        # Exact source candidate and destination active-profile authority are synthetic.
+        registry=load_registry_bytes(self.profile)
+        source=replace(registry,host='shadow.example.ts.net',public_origin='https://shadow.example.ts.net') if complete else registry
+        destination=registry if complete else replace(registry,host='shadow.example.ts.net',public_origin='https://shadow.example.ts.net')
+        context=replace(fixture.context,public_origin=source.public_origin)
+        context.save(self.client)
+        plan=fixture.plan(source_registry=source,destination_registry=destination,source_context=context,
+            prepared=fixture.prepared_origin(destination.public_origin),
+            client_root=self.client,destination_client_root=self.root/'origin-namespace',
+            destination_profile_digest=hashlib.sha256(self.profile).hexdigest())
+        session=NasOriginTransitionSession(self.client)
+        session.begin(plan,operation_id='origin-original',approved_digest=plan.digest)
+        if complete: session.promote('origin-original',fixture.proof(plan,'origin-original'))
+        return plan,session
+
+    def test_origin_receipts_and_namespace_binding_survive_disposable_archive_verification(self):
+        plan,session=self.origin_transition()
+        original=(self.client/'origin-transition-origin-original.json').read_bytes()
+        binding=self.root/'origin-namespace/origin-binding.json'
+        before=binding.read_bytes()
+        self.write()
+        namespace=hashlib.sha256(str(self.root/'origin-namespace').encode()).hexdigest()
+        with tarfile.open(self.output,'r:') as bundle:
+            self.assertEqual(bundle.extractfile('client/origin-transition-origin-original.json').read(),original)
+            self.assertEqual(bundle.extractfile('client/origin-transition.lock').read(),b'')
+            self.assertEqual(bundle.extractfile('client/origin-namespaces/'+namespace+'/origin-binding.json').read(),before)
+            self.assertEqual(bundle.extractfile('client/origin-namespaces/'+namespace+'/origin-transition.lock').read(),b'')
+        # Verification consumes archived copies even if original namespaces disappear.
+        binding.rename(binding.with_suffix('.retained'))
+        self.assertTrue(verify_nas_client_backup(self.output)['verified'])
+        self.assertEqual((self.client/'origin-transition-origin-original.json').read_bytes(),original)
+
+    def test_origin_backup_refuses_busy_lock_and_foreign_namespace_binding(self):
+        plan,session=self.origin_transition()
+        with session.lock():
+            with self.assertRaises(NasClientBackupError): self.write()
+        binding=self.root/'origin-namespace/origin-binding.json'
+        value=json.loads(binding.read_bytes()); value['clientRoot']=str(self.root/'foreign')
+        from local_web_server.nas_platform_installation import canonical
+        binding.write_bytes(canonical(value))
+        with self.assertRaises(NasClientBackupError): self.write()
+
+    def test_pending_origin_capsule_and_selector_are_preserved_without_namespace(self):
+        plan,session=self.origin_transition(complete=False)
+        selector=(self.client/'origin-transition-pending.json').read_bytes()
+        self.assertEqual(self.write()['pendingOperations'],1)
+        with tarfile.open(self.output,'r:') as bundle:
+            self.assertEqual(bundle.extractfile('client/origin-transition-pending.json').read(),selector)
+            self.assertEqual(bundle.extractfile('client/origin-transition.lock').read(),b'')
+        self.assertFalse((self.root/'origin-namespace').exists())
+
+    def test_completed_origin_with_missing_namespace_refuses_partial_backup(self):
+        plan,session=self.origin_transition()
+        (self.root/'origin-namespace/origin-binding.json').unlink()
+        with self.assertRaises(NasClientBackupError): self.write()

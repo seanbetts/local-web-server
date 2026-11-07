@@ -230,10 +230,72 @@ def _find_selected(root, descriptor, selected):
     return dict(appId=descriptor.app_id, releaseDigest=descriptor.digest, preparedRoot=prepared, runtimeArchive=archive)
 
 
+def _origin_metadata(root, original):
+    """Select reviewed namespace copies without following archived absolute paths."""
+    from .nas_origin_transition import NasOriginTransitionPlan
+    directory=host_backup._open_directory(root)
+    try: names=set(os.listdir(directory))
+    finally: os.close(directory)
+    receipts=sorted(name for name in names if re.fullmatch('origin-transition-'+_OPERATION+r'\.json',name)
+                    and name!='origin-transition-pending.json')
+    if len(receipts)>128: raise ValueError
+    selected={}; plans={}; destinations={}
+    for name in receipts:
+        raw=_read(root,name); record=json.loads(raw)
+        if (canonical(record)!=raw or set(record)!={'schemaVersion','operationId','plan','phase'}
+                or type(record['schemaVersion']) is not int or record['schemaVersion']!=1
+                or record['phase'] not in ('prepared','remote-intent','complete')
+                or name!='origin-transition-'+record['operationId']+'.json'): raise ValueError
+        plan=NasOriginTransitionPlan.from_dict(record['plan']); value=plan.to_dict()
+        if value['clientRoot']!=str(original): raise ValueError
+        plans[record['operationId']]=(plan,record['phase'])
+        selected[name]=(root,name)
+        destination=_absolute(value['destinationClientRoot'])
+        if destination!=original: destinations[destination]=destinations.get(destination,False) or record['phase']=='complete'
+    if 'origin-transition-pending.json' in names:
+        raw=_read(root,'origin-transition-pending.json'); pending=json.loads(raw)
+        if (canonical(pending)!=raw or set(pending)!={'operationId','planDigest'}
+                or pending['operationId'] not in plans or pending['planDigest']!=plans[pending['operationId']][0].digest): raise ValueError
+        selected['origin-transition-pending.json']=(root,'origin-transition-pending.json')
+    if selected:
+        if _read(root,'origin-transition.lock')!=b'': raise ValueError
+        selected['origin-transition.lock']=(root,'origin-transition.lock')
+    elif 'origin-transition.lock' in names:
+        if _read(root,'origin-transition.lock')!=b'': raise ValueError
+        selected['origin-transition.lock']=(root,'origin-transition.lock')
+    for destination in sorted(destinations):
+        key=hashlib.sha256(str(destination).encode()).hexdigest()
+        relative='origin-namespaces/'+key
+        source=destination if root==original else root/relative
+        try: raw=_read(source,'origin-binding.json')
+        except FileNotFoundError:
+            if destinations[destination]: raise ValueError
+            continue
+        binding=json.loads(raw)
+        if (canonical(binding)!=raw or type(binding) is not dict
+                or set(binding)!={'schemaVersion','operationId','planDigest','clientRoot','contextDigest','publicOrigin','phase','installedMarkerDigest'}
+                or type(binding['schemaVersion']) is not int or binding['schemaVersion']!=1
+                or binding['operationId'] not in plans or binding['clientRoot']!=str(original)
+                or binding['phase'] not in ('pending','complete')): raise ValueError
+        plan,phase=plans[binding['operationId']]; value=plan.to_dict()
+        if (value['destinationClientRoot']!=str(destination) or plan.digest!=binding['planDigest']
+                or hashlib.sha256(canonical(value['nextContext'])).hexdigest()!=binding['contextDigest']
+                or value['toOrigin']!=binding['publicOrigin'] or value['installedMarkerDigest']!=binding['installedMarkerDigest']
+                or binding['phase']=='pending' and phase=='complete'): raise ValueError
+        if _read(source,'origin-transition.lock')!=b'': raise ValueError
+        for filename in ('origin-binding.json','origin-transition.lock'):
+            selected[relative+'/'+filename]=(source,filename)
+    return selected
+
+
 def _plan(root, original, registry, profile_digests):
     _context(root, 'installation-context.json', registry)
-    selected = {'installation-context.json'}
+    origin_sources=_origin_metadata(root,original)
+    selected = {'installation-context.json',*origin_sources}
     pending = []
+    if 'origin-transition-pending.json' in origin_sources:
+        selector=json.loads(_read(root,'origin-transition-pending.json'))
+        pending.append(('origin-transition',selector['operationId']))
     preparations = []
     for app, names in _inventory(root):
         for name in names:
@@ -280,7 +342,7 @@ def _plan(root, original, registry, profile_digests):
                 _runtime(root, _source_relative(receipt['runtimeArchive'], original), descriptor, selected)
             elif receipt['runtimeArchive'] is not None: raise ValueError
     if len(selected) > MAX_FILES: raise ValueError
-    return tuple(sorted(selected)), tuple(pending), preparations
+    return tuple(sorted(selected)), tuple(pending), preparations, origin_sources
 
 
 def _copy(root, relative, destination, *, expected_size=None):
@@ -310,7 +372,7 @@ def _host(path):
 def _verify_tree(directory, manifest):
     backup, registry, digests = _host(directory/'host-backup.json')
     if hashlib.sha256(backup.profile_bytes).hexdigest() != manifest['profileSha256'] or backup.created_at != manifest['createdAt']: raise ValueError
-    selected, pending, preparations = _plan(directory/'client', _absolute(manifest['sourceClientRoot']), registry, digests)
+    selected, pending, preparations, origin_sources = _plan(directory/'client', _absolute(manifest['sourceClientRoot']), registry, digests)
     if preparations != manifest['selectedPreparations']: raise ValueError
     expected = {'host-backup.json', *('client/' + name for name in selected)}
     if expected != {row['path'] for row in manifest['files']}: raise ValueError
@@ -377,6 +439,10 @@ def write_nas_client_backup(paths, output: Path, *, client_root: Path | None = N
         root_fd = host_backup._open_directory(root); locks.callback(os.close, root_fd)
         root_info = os.fstat(root_fd)
         if stat.S_IMODE(root_info.st_mode) != 0o700 or root_info.st_uid != os.getuid(): raise ValueError
+        try: origin_lock=_open(root,'origin-transition.lock')
+        except FileNotFoundError: origin_lock=None
+        if origin_lock is not None:
+            locks.callback(os.close,origin_lock); fcntl.flock(origin_lock,fcntl.LOCK_SH|fcntl.LOCK_NB)
         inventory = _inventory(root)
         for app, names in inventory:
             try: fd = _open(root, f'apps/{app}/deploy.lock')
@@ -385,17 +451,25 @@ def write_nas_client_backup(paths, output: Path, *, client_root: Path | None = N
                 continue
             locks.callback(os.close, fd); fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
         digests = {parse_revision(record.content).current_registry_sha256 for record in backup.revisions}
-        selected, pending, preparations = _plan(root, root, registry, digests)
+        selected, pending, preparations, origin_sources = _plan(root, root, registry, digests)
+        for source,filename in set(origin_sources.values()):
+            if filename=='origin-transition.lock' and source!=root:
+                fd=_open(source,filename); locks.callback(os.close,fd); fcntl.flock(fd,fcntl.LOCK_SH|fcntl.LOCK_NB)
+        # Namespace metadata must still match after all selected locks are held.
+        if _origin_metadata(root,root)!=origin_sources: raise ValueError
         sizes = {}
         for name in selected:
-            fd = _open(root, name)
+            source,relative=origin_sources.get(name,(root,name))
+            fd = _open(source, relative)
             try: sizes[name] = os.fstat(fd).st_size
             finally: os.close(fd)
         if sum(sizes.values()) + len(backup.document_bytes) > MAX_PAYLOAD_BYTES: raise ValueError
         with tempfile.TemporaryDirectory(prefix='local-web-client-stage-') as text:
             stage = Path(text).resolve(); host_file = stage/'host-backup.json'; host_file.write_bytes(backup.document_bytes); host_file.chmod(0o600)
             signatures = {}
-            for name in selected: signatures[name] = _copy(root, name, stage/'client'/name, expected_size=sizes[name])
+            for name in selected:
+                source,relative=origin_sources.get(name,(root,name))
+                signatures[name] = _copy(source, relative, stage/'client'/name, expected_size=sizes[name])
             rows = []
             for name in ('host-backup.json', *('client/' + n for n in selected)):
                 path = stage/name; digest = hashlib.sha256()
@@ -406,8 +480,10 @@ def write_nas_client_backup(paths, output: Path, *, client_root: Path | None = N
             _verify_tree(stage, manifest)
             latest = build_host_backup(paths, clock)
             if latest.profile != backup.profile or latest.revisions != backup.revisions or _inventory(root) != inventory: raise ValueError
+            if _origin_metadata(root,root)!=origin_sources: raise ValueError
             for name, signature in signatures.items():
-                fd = _open(root, name)
+                source,relative=origin_sources.get(name,(root,name))
+                fd = _open(source, relative)
                 try:
                     if _signature(os.fstat(fd)) != signature: raise ValueError
                 finally: os.close(fd)

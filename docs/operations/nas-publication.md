@@ -259,9 +259,15 @@ replacement; reversing retains every latest observed runtime/context record.
 
 An origin reversal preserves NAS data. Returning Mac writer authority after NAS
 writes still requires the independently tested latest-data transfer/restore
-route. Configuration rollback alone cannot provide that guarantee. Recovery
-backup selection must cover original transition receipts and namespace bindings
-before operational cutover.
+route. Configuration rollback alone cannot provide that guarantee.
+
+The NAS client recovery backup includes original transition receipts, the
+pending selector and required empty lock files. Selected destination bindings
+are stored under `client/origin-namespaces/<destination-path-sha256>/` and
+validated against their original plans. Verification reads only disposable
+archive copies; it never follows archived absolute paths. A busy transition,
+foreign binding or missing completed namespace refuses the backup. This remains
+an artifact/verification route, with no live restore or hostname effect.
 
 The private helper's fixed
 source-upgrade preview/apply/status route can install later reviewed helper

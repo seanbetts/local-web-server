@@ -235,3 +235,16 @@ class OriginTransitionTests(unittest.TestCase):
             session.begin(plan,operation_id='original',approved_digest=plan.digest)
             session.promote('original',self.proof(plan))
             self.assertEqual(nas_client_root(self.target),self.root)
+
+    def test_pending_selector_name_cannot_be_used_as_operation_identity(self):
+        from local_web_server.nas_origin_transition import NasOriginTransitionSession
+        plan=self.plan(); session=NasOriginTransitionSession(self.root)
+        with self.assertRaises(ValueError): session.begin(plan,operation_id='pending',approved_digest=plan.digest)
+        self.assertFalse((self.root/'origin-transition-pending.json').exists())
+
+    def test_unknown_status_creates_no_recovery_files(self):
+        from local_web_server.nas_origin_transition import NasOriginTransitionSession
+        before=set(self.root.iterdir())
+        with self.assertRaises(FileNotFoundError):
+            NasOriginTransitionSession(self.root).status('unknown',observe=lambda *args:None)
+        self.assertEqual(set(self.root.iterdir()),before)

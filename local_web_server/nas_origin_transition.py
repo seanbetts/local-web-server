@@ -86,7 +86,7 @@ def _binding(root):
 
 
 def _operation(value):
-    if type(value) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}',value):
+    if type(value) is not str or value=='pending' or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}',value):
         raise ValueError('original transition operation required')
 
 
@@ -194,9 +194,9 @@ class NasOriginTransitionSession:
     def __init__(self,client_root): self.root=_path(client_root)
 
     @contextmanager
-    def lock(self):
+    def lock(self, *, create=True):
         parent=_client_directory(self.root)
-        try: fd=os.open('origin-transition.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,0o600,dir_fd=parent)
+        try: fd=os.open('origin-transition.lock',os.O_RDWR|(os.O_CREAT if create else 0)|os.O_NOFOLLOW|os.O_NONBLOCK,0o600,dir_fd=parent)
         finally: os.close(parent)
         try:
             info=os.fstat(fd)
@@ -247,7 +247,7 @@ class NasOriginTransitionSession:
             return transition(plan,operation_id)
 
     def status(self,operation_id,*,observe):
-        with self.lock():
+        with self.lock(create=False):
             _,plan=self._load(operation_id)
             return observe(plan,operation_id)
 
