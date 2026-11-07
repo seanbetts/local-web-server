@@ -136,8 +136,15 @@ for (const colourScheme of ['light', 'dark'] as const) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       const service = page.getByRole('region', { name: 'NAS services' }).getByRole('link').first();
       const serviceBox = await service.boundingBox();
-      expect(serviceBox!.height).toBeGreaterThanOrEqual(44);
-      expect(serviceBox!.height).toBeLessThan(90);
+      expect(serviceBox!.height).toBeGreaterThanOrEqual(100);
+      expect(serviceBox!.height).toBeLessThan(130);
+      const serviceBoxes = await page.getByRole('region', { name: 'NAS services' }).getByRole('link')
+        .evaluateAll(elements => elements.map(element => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height })));
+      for (const box of serviceBoxes) {
+        expect(box.width).toBeCloseTo(serviceBox!.width, 0);
+        expect(box.height).toBe(serviceBox!.height);
+      }
+      expect(await service.evaluate(element => getComputedStyle(element).textDecorationLine)).toBe('none');
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
       expect(errors).toEqual([]);
       // The fixture deliberately returns 503 for the Example Notes backend health probe.

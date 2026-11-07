@@ -171,22 +171,32 @@ body {
 }
 
 .system-index__services {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--lwp-space-3);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--lwp-space-4);
 }
 
 .system-index-service {
-  min-height: 3rem;
-  max-width: 100%;
+  height: 7rem;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
   gap: var(--lwp-space-3);
-  text-align: left;
+  text-align: center;
+  text-decoration: none;
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .system-index-service__icon {
   flex: none;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 2rem;
+  height: 2rem;
   color: var(--system-index-accent);
+}
+
+@media (max-width: 48rem) {
+  .system-index__services {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
