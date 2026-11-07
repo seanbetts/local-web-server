@@ -1,5 +1,6 @@
 """Prepared schema-3 configuration publication in disposable private stores."""
 import json
+from datetime import timedelta
 from unittest.mock import patch
 
 from local_web_server.host_commands import HostCommands, HostCommandError
@@ -66,6 +67,7 @@ class HostConfigureTests(StoreFixture):
         self.commands.apply(self.preview())
         self.assertFalse(json.loads(self.store.read_current())['apps'][0]['autoDeploy'])
         self.payload['apps'][0]['autoDeploy'] = True
+        self.commands = HostCommands(self.root, clock=lambda: CLOCK() + timedelta(seconds=1))
         self.write_source()
         self.commands.apply(self.preview())
         self.assertTrue(json.loads(self.store.read_current())['apps'][0]['autoDeploy'])
