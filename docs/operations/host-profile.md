@@ -66,6 +66,13 @@ a local Unix socket. Native frontend builds and warm dependency cache reads
 do not require a Linux image build. `local-web-platform` is reserved for the
 platform release and cannot be registered as a NAS app.
 
+NAS targets default to `writesEnabled: false`. The generated ingress permits
+GET, HEAD and OPTIONS and rejects other methods with an uncached 503 before
+they reach an app. Keep that fence during production data copying and read-only
+acceptance. Enabling writes is an explicit reviewed profile/configuration
+change after the writer handoff. An isolated rehearsal using disposable state
+may explicitly enable writes. This setting does not affect Mac targets.
+
 Prepare a private mode-`0600` registry file containing the complete schema-3
 profile, including its explicit `target` and service links. Preview does not
 write any profile, revision or backup:

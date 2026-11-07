@@ -299,6 +299,13 @@ def render_caddyfile(
         )
     )
     route_lines = lines[len(opening) :]
+    if nas and not registry.target.writes_enabled:
+        route_lines = [
+            '    @migration_writes not method GET HEAD OPTIONS',
+            '    header @migration_writes Cache-Control "no-store"',
+            '    respond @migration_writes "Writes are paused during migration." 503',
+            *route_lines,
+        ]
     lines = ["    route {"]
     lines.extend(f"    {line}" for line in route_lines)
     lines.append("    }")

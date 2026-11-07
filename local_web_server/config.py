@@ -878,8 +878,11 @@ def _parse_target(value: Any) -> NasTarget:
     if kind != "nas-docker":
         raise ConfigError("registry.target.kind must be macos or nas-docker")
     fields = {"kind", "adapterCommand", "networkSubnet", "proxyAddress"}
-    _reject_unknown_keys(target, fields | {"buildContext"}, "registry.target")
+    _reject_unknown_keys(target, fields | {"buildContext", "writesEnabled"}, "registry.target")
     _require_keys(target, fields, "registry.target")
+    writes_enabled = target.get('writesEnabled', False)
+    if type(writes_enabled) is not bool:
+        raise ConfigError('registry.target.writesEnabled must be an explicit boolean')
     build_context = target.get("buildContext")
     if "buildContext" in target and (type(build_context) is not str or not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", build_context
@@ -904,7 +907,7 @@ def _parse_target(value: Any) -> NasTarget:
             raise ValueError
     except (ValueError, TypeError) as error:
         raise ConfigError("NAS target requires a private IPv4 subnet and usable proxy address") from error
-    return NasTarget(kind, adapter, str(network), str(address), build_context)
+    return NasTarget(kind, adapter, str(network), str(address), build_context, writes_enabled)
 
 
 def _parse_service_link(value: Any) -> ExternalServiceLink:

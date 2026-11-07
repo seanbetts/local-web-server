@@ -34,6 +34,16 @@ class NasTargetTests(unittest.TestCase):
         self.assertEqual(registry.target.adapter_command,('/usr/local/bin/local-web-nas',))
         self.assertEqual(registry.target.proxy_address,'172.30.200.2')
 
+    def test_nas_writes_default_to_fenced_and_require_an_explicit_boolean(self):
+        self.payload['target']=dict(kind='nas-docker',adapterCommand=['/usr/local/bin/local-web-nas'],
+                                    networkSubnet='172.30.200.0/24',proxyAddress='172.30.200.2')
+        self.assertFalse(self.load().target.writes_enabled)
+        self.payload['target']['writesEnabled']=True
+        self.assertTrue(self.load().target.writes_enabled)
+        for value in (None, 'false', 0, 1):
+            self.payload['target']['writesEnabled']=value
+            with self.subTest(value=value),self.assertRaises(ConfigError): self.load()
+
     def test_nas_target_declares_a_named_mac_builder_without_using_ambient_docker(self):
         self.payload['target']=dict(kind='nas-docker',adapterCommand=['/usr/local/bin/local-web-nas'],
             networkSubnet='172.30.200.0/24',proxyAddress='172.30.200.2',buildContext='local-web-build')

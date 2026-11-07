@@ -9,6 +9,7 @@ class NasTarget:
     network_subnet: str | None = None
     proxy_address: str | None = None
     build_context: str | None = None
+    writes_enabled: bool = False
 
 
 @dataclass(frozen=True)
