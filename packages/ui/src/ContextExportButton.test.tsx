@@ -132,6 +132,6 @@ describe('ContextExportButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export context' }));
 
     await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('button', { name: 'Export context' })).not.toHaveAttribute('aria-busy');
+    expect(await screen.findByRole('button', { name: 'Export context' })).not.toHaveAttribute('aria-busy');
   });
 });
