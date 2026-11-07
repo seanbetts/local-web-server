@@ -224,11 +224,46 @@ publication stops. The maintained installer entry point formats NAS preview and
 publication results directly; it does not expect Mac installer/skill results.
 
 
-The temporary-to-canonical origin handoff is explicitly pending. Installed
-markers and saved contexts retain one exact origin; the current client namespace
-also includes it. A reviewed transition must relocate/bind context and reactivate
-backends under the new origin once actual rehearsal identity facts are available.
-Bootstrap does not silently widen this guard. The private helper's fixed
+The public source contract for a reviewed temporary-to-canonical origin handoff
+is `nas_origin_transition.py`. It does not rename nodes, apply profiles, change
+grants, admit writers, start services or move data. Actual private orchestration
+and production approval remain separate. Bootstrap provenance remains immutable.
+
+`preview_nas_origin_transition` freezes the exact source/destination profile
+hashes, installed marker hash, current platform/configuration observations,
+prepared destination platform, unchanged application descriptors/runtime metadata,
+and original/destination client directories. Both directions use the recorded
+NAS temporary/production name pair within the same Tailnet suffix. The retained
+Mac name is excluded. Target adapter, storage, network, image pins, application
+registration and write policy cannot change; both profiles keep writes disabled.
+
+`NasOriginTransitionSession.begin` persists the approved original plan. `apply`
+checks current authority through an injected callback and records remote intent
+before invoking the private transition callback once. Any lost acknowledgement
+requires `status` with the same original operation. Status uses the frozen plan
+and recovery directory and does not validate the active profile or invoke the
+transition callback. The private driver must separately journal each uncertain
+runtime effect and provide fresh destination HTTPS/application checks.
+
+`promote` accepts only an exact healthy `origin-ready` observation matching the
+original operation, plan, destination origin, platform/configuration digests and
+complete application digest mapping. It atomically saves the next context in the
+historical directory and publishes a direct destination namespace binding.
+Receipts are never copied or relabelled. Interrupted local promotion can finish
+with the original observation and receipt; it cannot replay runtime activation.
+Normal namespace resolution refuses pending transitions, alias chains, foreign
+collisions, changed baseline metadata and stale origins. Subsequent ordinary
+context updates may only extend immutable runtime/platform history. Repeated
+forward/reverse transitions compare the exact previously completed binding before
+replacement; reversing retains every latest observed runtime/context record.
+
+An origin reversal preserves NAS data. Returning Mac writer authority after NAS
+writes still requires the independently tested latest-data transfer/restore
+route. Configuration rollback alone cannot provide that guarantee. Recovery
+backup selection must cover original transition receipts and namespace bindings
+before operational cutover.
+
+The private helper's fixed
 source-upgrade preview/apply/status route can install later reviewed helper
 code: it binds exact old/new three-file bundles, retains the old bundle, refuses
 pending operations, and switches the verified marker atomically under the
