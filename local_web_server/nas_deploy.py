@@ -17,7 +17,10 @@ import re
 import stat
 import tarfile
 import tempfile
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .nas_platform_installation import InstallationApproval
 
 from .nas_transport import NasTransportError
 from .release_manifest import FileEntry, ReleaseDescriptorV1, snapshot_files
@@ -111,14 +114,22 @@ class NasDeploymentManager:
 
     def deploy(self, descriptor: ReleaseDescriptorV1, files_root: Path, *,
                operation_id: str, expected_current: str | None,
-               runtime_archive: Path | None = None) -> PublicationResult:
+               runtime_archive: Path | None = None,
+               installation_approval: InstallationApproval | None = None) -> PublicationResult:
         self._validate(descriptor, expected_current)
         files_root = Path(files_root)
         if snapshot_files(files_root) != descriptor.files:
             raise ValueError('prepared app files do not match the complete release descriptor')
         identity = dict(appId=descriptor.app_id, releaseDigest=descriptor.digest)
-        prepared = self.transport.request('prepare', operation_id=operation_id,
-            payload=dict(**identity, descriptor=descriptor.to_dict(), expectedCurrent=expected_current))
+        payload = dict(**identity, descriptor=descriptor.to_dict(), expectedCurrent=expected_current)
+        if installation_approval is not None:
+            from .nas_platform_installation import InstallationApproval
+            if (not isinstance(installation_approval, InstallationApproval) or descriptor.app_id != 'local-web-platform'
+                    or installation_approval.platform_release_digest != descriptor.digest
+                    or installation_approval.expected_current != expected_current):
+                raise ValueError('installation approval requires its exact reserved platform release')
+            payload['installationApproval'] = installation_approval.to_dict()
+        prepared = self.transport.request('prepare', operation_id=operation_id, payload=payload)
         if (type(prepared) is not dict or set(prepared) != {'missingBlobs', 'runtimeRequired'}
                 or type(prepared['missingBlobs']) is not list
                 or type(prepared['runtimeRequired']) is not bool

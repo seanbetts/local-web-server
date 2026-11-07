@@ -53,6 +53,36 @@ class PreparedNasPlatform:
     files: tuple[PlatformFile, ...]
     permissions: tuple[PathPermission, ...]
 
+    def verify(self) -> None:
+        entries = tuple(FileEntry(file.path, hashlib.sha256(file.content).hexdigest(), len(file.content), file.mode)
+                        for file in self.files)
+        if entries != self.descriptor.files or len({file.path for file in self.files}) != len(self.files):
+            raise ValueError('prepared platform files disagree with descriptor')
+        paths = set()
+        for entry in self.permissions:
+            path = Path(entry.path)
+            if ('\\' in entry.path or '\0' in entry.path or entry.path in paths or entry.path != '.' and (path.is_absolute() or path.as_posix() != entry.path
+                    or '..' in path.parts) or entry.kind not in ('file', 'directory')
+                    or any(type(value) is not int or value < 0 for value in (entry.mode, entry.uid, entry.gid)) or entry.mode > 0o777):
+                raise ValueError('invalid platform permission plan')
+            paths.add(entry.path)
+
+    def write_files(self, root: Path) -> None:
+        """Materialize only a new local publication artifact, never a NAS path."""
+        self.verify()
+        root = Path(root)
+        root.mkdir(mode=0o700)
+        for file in self.files:
+            path = root / file.path
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with path.open('xb') as output:
+                output.write(file.content)
+                output.flush(); os.fsync(output.fileno())
+                os.fchmod(output.fileno(), file.mode)
+            parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try: os.fsync(parent)
+            finally: os.close(parent)
+
     @property
     def source_config_digest(self) -> str:
         """Bind runtime approval to the complete fixed configuration, not UI bytes."""

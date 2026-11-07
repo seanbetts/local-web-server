@@ -53,6 +53,32 @@ extend the central identity catalogue rather than disguising the gap.
 Supply route or capabilities only when the user or app design requires them.
 Static is the default. Use explicit `--kind service` only when the approved architecture needs a local backend.
 
+## NAS target workflow
+
+Development and production builds stay on the Mac. Before a host migration,
+use `app doctor --target nas-docker --repository .` and `app check --target
+nas-docker --repository .` to check source eligibility independently of the
+installed host profile. Once configured, ordinary `app check` follows the host
+target. Keep `npm run check` and browser tests app-local.
+
+Generated static and reference Node service apps include explicit production
+recipes. Preserve app-owned recipes during updates. Review locked inputs, runtime
+dependencies, secrets, resources and data compatibility when extending a service;
+Mac compatibility alone does not prove a Linux runtime.
+
+After the separately approved NAS bootstrap, use the standard activation,
+deployment, status, rollback and fleet commands. Native dependencies and Linux
+dependency images are cached on the Mac; publication transfers verified missing
+bytes. Never substitute local deployment or a generic SSH command after a NAS
+failure. Retain the original operation and use the recovery command it reports.
+See [NAS publication](../../docs/operations/nas-publication.md).
+
+Production data routes through the app-owned API and `app data-target`. After
+cutover the NAS is the sole writer. Keep Mac development on explicitly selected
+fixtures/copies; never patch old repository data as a production fallback. Code
+rollback preserves current data. A data return or hostname handoff follows the
+reviewed migration procedure.
+
 ## Exports
 
 Generated apps own `buildContextExport()` as domain code. Keep it useful when a
@@ -68,7 +94,7 @@ for backend-dependent actions. Read the exact contract in
 
 ## Boundaries
 
-- Host ingress is platform-owned. Schema version 1 retains trusted-LAN HTTP; version 2 uses `tailscale-serve` and the canonical HTTPS `publicOrigin`, with externally managed Tailscale Serve proxying to loopback-only Caddy. App work never edits Tailscale, host ingress, Caddy, or LaunchAgents. Funnel and a LAN fallback are unsupported.
+- Host ingress is platform-owned. Schema version 1 retains trusted-LAN HTTP; versions 2/3 support `tailscale-serve` and the canonical HTTPS `publicOrigin`. Schema 3 explicitly selects Mac or NAS hosting and holds NAS service links separately from managed apps. App work never edits Tailscale identities, host ingress or LaunchAgents. Funnel and a LAN fallback are unsupported.
 - Origin-bearing service commands use the existing `app migrate-service-command` preview and separately approved live apply; see [references/service-apps.md](references/service-apps.md). App activation, deployment, rollback and fleet updates never select or migrate host ingress.
 - A schema version 2 HTTPS failure is a platform ingress blocker. Preserve the failed public health gate; never bypass it with direct registry, Caddy or LaunchAgent edits, direct HTTP probes, or disabled TLS verification. Host-registry migration and installer apply require separate explicit live approval; implementation or passing local tests does not establish activation.
 - Keep `npm run check` app-local. Never make it invoke `local-web`.

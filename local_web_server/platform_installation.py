@@ -15,6 +15,8 @@ from .git_runner import GitRunnerError, run_git
 from .host_profile import HostProfileError, HostProfilePaths, resolve_host_profile
 from .install import InstallError, InstallResult, Installer, load_main_manifests
 from .process_runner import ProcessCommand, ProcessRunError, ProcessRunner
+from .nas_deploy import PublicationResult
+from .nas_platform_installation import NasInstallationPreview
 
 
 @dataclass(frozen=True)
@@ -93,12 +95,13 @@ def install_platform(
     recover_missing_caddy: bool = False,
     prepare_tailscale_port_migration: bool = False,
     registry_path: Path | None = None,
-) -> PlatformInstallationResult:
+    selected_candidate=None,
+) -> PlatformInstallationResult | NasInstallationPreview | PublicationResult:
     """Build reviewed UI surfaces and install their host-owned artifacts."""
     platform = Path(repository)
     try:
         require_committed_installation_sources(
-            platform, require_main=not dry_run
+            platform, require_main=False
         )
         if registry_path is None:
             selected_registry = resolve_host_profile(platform)
@@ -126,6 +129,27 @@ def install_platform(
         else:
             selected_registry = Path(registry_path)
             registry = load_registry(selected_registry)
+        if not dry_run:
+            require_committed_installation_sources(platform, require_main=True)
+        if getattr(getattr(registry, 'target', None), 'kind', 'macos') == 'nas-docker':
+            from .nas_platform_installation import install_saved_nas_platform
+            import hashlib
+            try:
+                profile_bytes = snapshot.profile_bytes if registry_path is None else selected_registry.read_bytes()
+                if registry_path is not None and load_registry_bytes(profile_bytes) != registry:
+                    raise InstallError('NAS host profile changed during installation preparation')
+                revision = hashlib.sha256(profile_bytes).hexdigest()
+                bound_profile = resolve_host_profile(platform)
+                if bound_profile != selected_registry:
+                    raise InstallError('NAS host profile changed during installation preparation')
+                def validate_profile():
+                    if (resolve_host_profile(platform) != bound_profile
+                            or hashlib.sha256(selected_registry.read_bytes()).hexdigest() != revision):
+                        raise InstallError('NAS host profile changed during installation preparation')
+                return install_saved_nas_platform(platform, registry, dry_run=dry_run,
+                    profile_revision=revision, selected_candidate=selected_candidate, validate_profile=validate_profile)
+            except ValueError as error:
+                raise InstallError(str(error)) from error
         ProcessRunner().run(
             platform,
             (

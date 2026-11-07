@@ -18,8 +18,12 @@ Use `$local-web-app-development` for creation, development, diagnostics, verific
 
 - Preserve the app-owned `production` declaration when present. Its explicit
   native build commands and dependency cache are separate from Linux runtime
-  dependencies. A generated service needs a reviewed recipe and committed inputs
-  before NAS publication; Mac compatibility alone is insufficient.
+  dependencies. Review the generated service's reference recipe when adding
+  dependencies, resources, secrets or durable data; keep all declared inputs
+  committed. Mac compatibility alone is insufficient.
 - Use only the selected target's supported lifecycle. A failed NAS operation
   must remain visible; never publish to the Mac as an implicit fallback. Source
   checks do not authorize data migration, origin handoff or live installation.
+- Production agent/CLI operations resolve authority with `app data-target` and
+  use app-owned API routes. After NAS cutover keep development on explicit
+  fixtures/copies; an unavailable target must not reopen old Mac production data.

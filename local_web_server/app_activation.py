@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,11 +17,14 @@ from .app_registration import (
 )
 from .config import ConfigError, load_manifest, load_registry
 from .deploy import DeploymentManager, DeploymentResult
+from .app_doctor import AppDoctor
+from .nas_lifecycle import NasHostDeploymentManager, NasRecoveryRequired
+from .nas_recipe import require_nas_recipe
 from .health import frontend_health_path
 from .index_registry import INDEX_REGISTRY_ROUTE
 from .install import InstallError
 from .icons import canonical_manifest_icon
-from .host_profile import HostProfilePaths
+from .host_profile import HostProfilePaths, resolve_host_profile
 from .host_profile_store import HostProfileStore, HostProfileStoreError
 from .public_origin import join_public_origin
 from .public_http import open_public_request
@@ -35,6 +39,11 @@ _PLATFORM_ROOT = Path(__file__).resolve().parents[1]
 _STAGES = ("validate", "register", "install", "deploy", "verify")
 _PORT_STABILITY_ATTEMPTS = 3
 _MAX_INDEX_BYTES = 1024 * 1024
+
+
+def _deployer_for_registry(registry, *, profile_authority=None):
+    options={} if profile_authority is None else dict(profile_authority=profile_authority)
+    return NasHostDeploymentManager(registry,**options) if registry.target.kind == 'nas-docker' else DeploymentManager(registry)
 
 
 class AppActivationError(RuntimeError):
@@ -112,24 +121,25 @@ class AppActivator:
         allocator: ServicePortAllocator | None = None,
         profile_store: HostProfileStore | None = None,
         install: Callable[..., Any] = install_platform,
-        deployer_factory: Callable[[Any], Any] = DeploymentManager,
+        deployer_factory: Callable[[Any], Any] | None = None,
         verify: Callable[[Path, Any, str], None] = verify_served_index_tile,
     ):
         self.platform_repository = Path(platform_repository)
         profile_paths = HostProfilePaths.for_repository(self.platform_repository)
         self.registry_path = Path(registry_path or profile_paths.profile)
         self.registrar = registrar or AppRegistrar()
+        self._default_registrar = registrar is None
         self.allocator = allocator or ServicePortAllocator()
         self.profile_store = profile_store or HostProfileStore(profile_paths)
         self.install = install
-        self.deployer_factory = deployer_factory
+        self.deployer_factory = deployer_factory or _deployer_for_registry
         self.verify = verify
 
     def preview(self, repository: Path) -> AppActivationPlan:
         try:
             registry = load_registry(self.registry_path)
-            if registry.target.kind != "macos":
-                raise AppActivationError("NAS activation requires the NAS lifecycle; macOS fallback is disabled")
+            if self._default_registrar:
+                self.registrar = AppRegistrar(doctor=AppDoctor(target_kind=registry.target.kind))
             require_committed_installation_sources(
                 self.platform_repository, require_main=False
             )
@@ -137,6 +147,10 @@ class AppActivator:
             if not app_repository.is_dir():
                 raise OSError
             manifest = load_manifest(app_repository / "local-web.json")
+            if registry.target.kind == 'nas-docker':
+                recipe = require_nas_recipe(manifest.production, kind=manifest.kind)
+                if recipe.rollback_policy != 'compatible':
+                    raise AppActivationError('NAS activation requires a reviewed compatible data contract')
             port = None
             if manifest.kind == "service":
                 matching = [
@@ -261,12 +275,18 @@ class AppActivator:
             except (AppRegistrationError, HostProfileStoreError, OSError, ValueError) as error:
                 raise AppActivationError("application registration failed") from error
 
-        def install() -> None:
+        def install(*, selected_candidate=None) -> None:
             try:
+                target_options = {}
+                if registry.target.kind == 'nas-docker':
+                    if selected_candidate is None:
+                        raise ValueError('NAS installation requires the exact selected prepared candidate')
+                    target_options = dict(registry_path=self.registry_path, selected_candidate=selected_candidate)
                 self.install(
                     self.platform_repository,
                     dry_run=False,
                     recover_missing_caddy=True,
+                    **target_options,
                 )
             except (
                 ConfigError,
@@ -279,15 +299,19 @@ class AppActivator:
 
         try:
             registry = load_registry(self.registry_path)
-            deployer = self.deployer_factory(registry)
-            if exact_registered_plan:
-                def validate_locked() -> None:
-                    if self.registry_path.read_bytes() != registration.candidate:
-                        raise AppRegistrationError(
-                            "application activation plan changed"
-                        )
-                    self.profile_store.require_clean()
+            if registry.target.kind=='nas-docker' and self.deployer_factory is _deployer_for_registry:
+                deployer = self.deployer_factory(registry,profile_authority=hashlib.sha256(registration.candidate).hexdigest())
+            else:
+                deployer = self.deployer_factory(registry)
+            def validate_locked() -> None:
+                if (registry.target.kind=='nas-docker' and resolve_host_profile(self.platform_repository)!=self.registry_path
+                        or self.registry_path.read_bytes() != registration.candidate):
+                    raise AppRegistrationError(
+                        "application activation plan changed"
+                    )
+                self.profile_store.require_clean()
 
+            if exact_registered_plan:
                 deployment = deployer.deploy(
                     plan.app_id,
                     install=install,
@@ -295,6 +319,8 @@ class AppActivator:
                     expected_current_commit=expected_former_live_commit,
                     validate_locked=validate_locked,
                 )
+            elif registry.target.kind == 'nas-docker':
+                deployment = deployer.deploy(plan.app_id, install=install, validate_locked=validate_locked)
             else:
                 deployment = deployer.deploy(
                     plan.app_id,
@@ -310,6 +336,8 @@ class AppActivator:
                 raise ValueError
         except _ActivationInstallationError as error:
             raise AppActivationError("application installation failed") from error
+        except NasRecoveryRequired as error:
+            raise AppActivationError(str(error)) from error
         except Exception as error:
             raise AppActivationError("application deployment failed") from error
 

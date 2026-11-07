@@ -1,10 +1,16 @@
 # Local Web Server
 
-Local Web is a macOS framework for turning independent application repositories
-into a coherent private web catalogue. It builds immutable releases, generates
-Caddy and LaunchAgent configuration, supervises local services, applies shared
-UI/security contracts, and provides preview-first recovery tooling—without
-making the application repositories part of one monolith.
+Local Web develops and builds independent application repositories on macOS
+and presents them as a private web catalogue. It supports Mac hosting and
+Mac-built Docker releases for a NAS, with immutable releases, shared UI/security
+contracts and preview-first recovery tooling. Applications remain independent
+repositories.
+
+The separate **NAS services** section links to existing NAS applications without
+registering them as managed Local Web apps. See [host configuration](docs/operations/host-profile.md)
+and [NAS publication](docs/operations/nas-publication.md). NAS installation and
+production data/hostname handoff require the reviewed migration procedure;
+source compatibility does not establish a completed live migration.
 
 The project is open source under the MIT licence. The npm workspace remains
 `private: true`; this repository is not an npm package release.
@@ -55,6 +61,12 @@ real host.
   app generation, and browser verification;
 - Caddy 2; and
 - optionally, externally managed Tailscale when using HTTPS ingress.
+
+These prerequisites describe Mac hosting and development. NAS publishing keeps
+builds on the Mac, uses an explicitly selected local Docker builder on dependency
+cache misses, and requires a separately prepared NAS Docker/Compose runtime with
+a dedicated Tailscale identity. Ordinary publication transfers missing verified
+bytes and performs no source build or dependency installation on the NAS.
 
 Install framework development dependencies without package lifecycle scripts:
 

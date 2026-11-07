@@ -141,6 +141,13 @@ databases, app data, logs, runtime releases, or a private Git bundle. Parsing is
 bounded to a 64 MiB document, a 5 MiB profile, 8 MiB per revision envelope, and
 10,000 revisions. Integrity digests do not authenticate or encrypt a backup.
 
+For an installed NAS client, the separate `host recovery-backup --output NEW_TAR`
+also preserves installation context, receipts and exact pending upload inputs.
+`host recovery-verify --from NEW_TAR` verifies it offline without restoring it.
+See [NAS recovery artifacts](nas-publication.md#original-operation-recovery)
+for limits, exclusions and storage requirements; the JSON host backup above
+retains its existing format.
+
 ### Restore
 
 ```sh

@@ -44,7 +44,7 @@ from local_web_server.fleet_update_models import (
     FleetUpdateResult,
 )
 from local_web_server.cli import build_parser
-from local_web_server.host_profile import HostProfilePaths
+from local_web_server.host_profile import HostProfileError, HostProfilePaths
 from local_web_server.host_profile_store import HostProfileStore
 from tests.helpers import init_git_repo
 
@@ -143,14 +143,14 @@ class CliTests(unittest.TestCase):
         self.host_profile_resolver = self.host_profile_patcher.start()
         self.addCleanup(self.host_profile_patcher.stop)
         self.registry_loader_patcher = patch(
-            "local_web_server.cli.load_registry_bytes", return_value=object()
+            "local_web_server.cli.load_registry_bytes", return_value=SimpleNamespace(target=SimpleNamespace(kind='macos'))
         )
         self.registry_loader = self.registry_loader_patcher.start()
         self.addCleanup(self.registry_loader_patcher.stop)
         self.profile_store_patcher = patch("local_web_server.cli.HostProfileStore")
         self.profile_store = self.profile_store_patcher.start()
         self.profile_store.return_value.read_snapshot.return_value = SimpleNamespace(
-            profile_bytes=_PRIVATE_HOST_PROFILE_BYTES
+            profile_bytes=_PRIVATE_HOST_PROFILE_BYTES, revisions=()
         )
         self.addCleanup(self.profile_store_patcher.stop)
 
@@ -450,6 +450,27 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("secret", stderr)
             self.assertNotIn("privateprivate", stderr)
 
+    @patch('local_web_server.cli.HostCommands')
+    @patch('local_web_server.cli.write_nas_client_backup', create=True)
+    def test_nas_client_backup_command_reports_only_approved_summary_fields(self, backup, commands):
+        backup.return_value = dict(verified=True,profileSha256='a'*64,pendingOperations=1,files=4,bytes=1234,
+                                  path=Path('/private/do-not-print'),private='do-not-print')
+        code,stdout,stderr = self.run_main(['host','recovery-backup','--output','/tmp/recovery.tar'])
+        self.assertEqual((code,stderr),(0,''))
+        self.assertEqual(json.loads(stdout),dict(kind='nas-client-recovery',verified=True,profileSha256='a'*64,
+                                               pendingOperations=1,files=4,bytes=1234))
+        backup.assert_called_once_with(commands.return_value.paths,Path('/tmp/recovery.tar'))
+
+    @patch('local_web_server.cli.HostCommands')
+    @patch('local_web_server.cli.verify_nas_client_backup', create=True)
+    def test_nas_client_backup_verification_needs_no_current_host_profile(self, verify, commands):
+        verify.return_value = dict(verified=True,profileSha256='a'*64,pendingOperations=1,files=4)
+        code,stdout,stderr = self.run_main(['host','recovery-verify','--from','/tmp/recovery.tar'])
+        self.assertEqual((code,stderr),(0,''))
+        self.assertEqual(json.loads(stdout)['kind'],'nas-client-recovery')
+        verify.assert_called_once_with(Path('/tmp/recovery.tar'))
+        commands.assert_not_called()
+
     def run_main(self, argv):
         from local_web_server.cli import main
 
@@ -563,6 +584,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.run_main(['rollback', 'example']), (0, 'example rolled back on NAS\n', ''))
         nas.return_value.rollback.assert_called_once_with('example')
         mac.assert_not_called()
+
+    @patch('local_web_server.cli.NasHostDeploymentManager')
+    def test_nas_cli_manager_is_bound_to_the_original_coherent_profile_snapshot(self, nas):
+        self.registry_loader.return_value = SimpleNamespace(target=SimpleNamespace(kind='nas-docker'))
+        nas.return_value.deploy.return_value = DeploymentResult('example','a'*40,'deployed','deployed',None)
+        self.assertEqual(self.run_main(['deploy','example'])[0],0)
+        validate = nas.call_args.kwargs['profile_validator']
+        import hashlib
+        expected=hashlib.sha256(self.profile_store.return_value.read_snapshot.return_value.profile_bytes).hexdigest()
+        self.assertEqual(nas.call_args.kwargs['profile_authority'],expected)
+        validate()
+        self.profile_store.return_value.read_snapshot.return_value = SimpleNamespace(profile_bytes=b'changed',revisions=())
+        with self.assertRaises(HostProfileError):
+            validate()
 
     @patch("local_web_server.cli.NasStatusCollector")
     @patch("local_web_server.cli.StatusCollector")
@@ -934,6 +969,16 @@ class CliTests(unittest.TestCase):
         )
         self.registry_loader.assert_called_once_with(_PRIVATE_HOST_PROFILE_BYTES)
         self.host_profile_resolver.assert_called_once_with(_PLATFORM_REPOSITORY)
+
+    @patch('local_web_server.cli.AppActivator')
+    def test_nas_activation_error_prints_original_recovery_command(self,activator):
+        from local_web_server.app_activation import AppActivationError
+        from local_web_server.nas_lifecycle import NasRecoveryRequired
+        recovery=NasRecoveryRequired('recipes','original-operation')
+        activator.return_value.activate.side_effect=AppActivationError(str(recovery))
+        code,out,error=self.run_main(['app','activate','--repository','/tmp/recipes','--apply'])
+        self.assertEqual((code,out),(2,''))
+        self.assertIn('local-web deploy recipes --recover original-operation',error)
 
     @patch("local_web_server.cli.AppActivator")
     def test_app_activate_previews_by_default_and_applies_only_when_requested(self, activator):
@@ -1870,6 +1915,28 @@ class CliTests(unittest.TestCase):
         checker.return_value.check.assert_called_once_with(Path("/tmp/recipes"))
         self.host_profile_resolver.assert_not_called()
         self.registry_loader.assert_not_called()
+
+    @patch('local_web_server.cli.AppDoctor')
+    @patch('local_web_server.cli.AppChecker')
+    def test_default_check_follows_the_configured_nas_target(self, checker, doctor):
+        self.registry_loader.return_value = SimpleNamespace(target=SimpleNamespace(kind='nas-docker'))
+        checker.return_value.check.return_value = DoctorReport('recipes', True, ())
+        self.assertEqual(self.run_main(['app', 'check', '--repository', '/tmp/recipes']),
+                         (0, 'recipes: checks passed\n', ''))
+        doctor.assert_called_once_with(target_kind='nas-docker')
+        checker.assert_called_once_with(doctor=doctor.return_value)
+        self.registry_loader.assert_called_once_with(_PRIVATE_HOST_PROFILE_BYTES)
+
+    @patch('local_web_server.cli.AppDoctor')
+    @patch('local_web_server.cli.AppRegistrar')
+    def test_registration_uses_configured_nas_source_eligibility(self, registrar, doctor):
+        self.registry_loader.return_value = SimpleNamespace(target=SimpleNamespace(kind='nas-docker'))
+        registrar.return_value.register.return_value = AppRegistrationResult('recipes', '/recipes', _PRIVATE_HOST_PROFILE, True, True)
+        with patch('local_web_server.cli._registration_profile_store'):
+            code, _stdout, stderr = self.run_main(['app', 'register', '--repository', '/tmp/recipes', '--dry-run'])
+        self.assertEqual((code, stderr), (0, ''))
+        doctor.assert_called_once_with(target_kind='nas-docker')
+        registrar.assert_called_once_with(doctor=doctor.return_value)
 
     @patch("local_web_server.cli.load_registry_bytes")
     @patch("local_web_server.theme.ThemeStore")

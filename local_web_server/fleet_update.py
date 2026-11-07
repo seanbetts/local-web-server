@@ -8,6 +8,7 @@ from typing import cast
 
 from .app_activation import AppActivationPlan, AppActivationResult, AppActivator
 from .app_check import AppChecker
+from .app_doctor import AppDoctor
 from .app_platform_commit import (
     AppGitState,
     AppPlatformCommitError,
@@ -33,6 +34,8 @@ from .fleet_update_models import (
 )
 from .fleet_live_release import RuntimeLiveReleaseInspector
 from .models import AppManifest, HostApp
+from .nas_lifecycle import NasLiveReleaseInspector
+from .nas_recipe import require_nas_recipe
 
 
 _PROVENANCE = Path(".local-web-platform.json")
@@ -51,29 +54,41 @@ class FleetUpdater:
         self,
         *,
         updater_factory: Callable[[], AppUpdater] = AppUpdater,
-        checker_factory: Callable[[], AppChecker] = AppChecker,
+        checker_factory: Callable[[], AppChecker] | None = None,
         activator_factory: Callable[[Path], AppActivator] = _activator_for_registry,
         committer: AppPlatformCommitter | None = None,
         publisher: UpdatePublisher | None = None,
         live_inspector: RuntimeLiveReleaseInspector | None = None,
     ) -> None:
         self._updater_factory = updater_factory
-        self._checker_factory = checker_factory
+        self._checker_factory = checker_factory or AppChecker
+        self._default_checker = checker_factory is None
         self._activator_factory = activator_factory
         self._committer = committer or AppPlatformCommitter()
         self._publisher = publisher or UpdatePublisher()
-        self._live_inspector = live_inspector or RuntimeLiveReleaseInspector()
+        self._live_inspector = live_inspector
+        self._default_live_inspector = live_inspector is None
+        self._target_kind = 'macos'
 
     def preview(self, registry_path: Path) -> FleetUpdatePlan:
         registry = load_registry(registry_path)
-        if registry.target.kind != "macos":
-            raise ValueError("NAS fleet update requires the NAS lifecycle; macOS fallback is disabled")
+        self._target_kind = registry.target.kind
+        if self._default_live_inspector:
+            self._live_inspector = (NasLiveReleaseInspector(registry) if self._target_kind == 'nas-docker'
+                                    else RuntimeLiveReleaseInspector())
         return FleetUpdatePlan(
             apps=tuple(
                 self._preview_app(app, registry_path, registry.runtime_root)
                 for app in registry.apps
             )
         )
+
+    def _check_app(self, repository):
+        if self._default_checker and self._target_kind == 'nas-docker':
+            checker = AppChecker(doctor=AppDoctor(target_kind='nas-docker'))
+        else:
+            checker = self._checker_factory()
+        return checker.check(repository)
 
     def apply(self, registry_path: Path) -> FleetUpdateResult:
         plan = self.preview(registry_path)
@@ -169,7 +184,7 @@ class FleetUpdater:
             return self._recover_uncommitted(app, update_plan)
 
         try:
-            self._checker_factory().check(app.repository)
+            self._check_app(app.repository)
         except Exception:
             return self._recover_app(
                 app,
@@ -301,7 +316,7 @@ class FleetUpdater:
             restoration_commit = self._committer.commit_restoration(
                 app.repository, update_plan, update_commit
             )
-            self._checker_factory().check(app.repository)
+            self._check_app(app.repository)
             manifest = load_manifest(app.repository / _MANIFEST)
             activator = self._activator_factory(registry_path)
             activation_plan = activator.preview(app.repository)
@@ -507,6 +522,14 @@ class FleetUpdater:
                 repository=state.repository,
                 source_head=state.head,
             )
+        if self._target_kind == 'nas-docker':
+            try:
+                recipe = require_nas_recipe(manifest.production, kind=manifest.kind)
+                if recipe.rollback_policy != 'compatible':
+                    raise ValueError
+            except ValueError:
+                return self._blocked(app, 'nas-production-ineligible', repository=state.repository,
+                                     source_head=state.head)
         if manifest.platform is None:
             return FleetAppPlan(
                 app_id=app.id,

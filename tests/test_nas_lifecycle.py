@@ -1,11 +1,12 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from local_web_server.nas_lifecycle import NasOperationStore, NasHostDeploymentManager, NasStatusCollector
+from local_web_server.nas_lifecycle import NasOperationStore, NasHostDeploymentManager, NasStatusCollector, NasLiveReleaseInspector
 from local_web_server.models import HostApp, HostRegistry
 from local_web_server.nas_models import NasTarget
 from local_web_server.nas_transport import NasTransportError
@@ -145,9 +146,9 @@ class NasHostLifecycleTests(unittest.TestCase):
             raise AssertionError(action)
         self.transport = SimpleNamespace(request=request)
 
-    def manager(self):
-        return NasHostDeploymentManager(self.registry, client_root=self.root/'client',
-            preparer=self.preparer, transport=self.transport, health=self.health)
+    def manager(self, registry=None, **options):
+        return NasHostDeploymentManager(registry or self.registry, client_root=self.root/'client',
+            preparer=self.preparer, transport=self.transport, health=self.health, **options)
 
     def test_deploy_builds_exact_main_on_mac_and_records_intent_before_publication(self):
         result = self.manager().deploy('example')
@@ -178,6 +179,58 @@ class NasHostLifecycleTests(unittest.TestCase):
         self.assertEqual(result.outcome, 'skipped')
         self.assertEqual(self.calls, [])
         self.preparer.prepare.assert_not_called()
+
+    def test_platform_install_receives_only_selected_candidate_before_app_publication(self):
+        installed = []
+        def install(*, selected_candidate):
+            installed.append(selected_candidate)
+            self.assertFalse((self.root/'client/apps/example/nas-operation.json').exists())
+            self.assertNotIn('prepare', [action for action, _, _ in self.calls])
+        self.manager().deploy('example', install=install)
+        self.assertEqual(installed, [self.prepared])
+
+    def test_failed_platform_install_leaves_no_app_receipt_or_remote_app_transition(self):
+        def install(*, selected_candidate):
+            raise ValueError('platform original operation requires recovery')
+        with self.assertRaisesRegex(ValueError, 'platform original operation'):
+            self.manager().deploy('example', install=install)
+        self.assertFalse((self.root/'client/apps/example/nas-operation.json').exists())
+        self.assertEqual([action for action, _, _ in self.calls], ['status'])
+
+    def test_profile_change_during_build_refuses_before_app_intent(self):
+        allowed = True
+        def validate():
+            if not allowed: raise ValueError('host profile changed')
+        def prepare(*args, **kwargs):
+            nonlocal allowed
+            allowed = False
+            return self.prepared
+        self.preparer.prepare.side_effect = prepare
+        manager = self.manager()
+        manager.profile_validator = validate
+        with self.assertRaisesRegex(ValueError,'host profile changed'):
+            manager.deploy('example')
+        self.assertFalse((self.root/'client/apps/example/nas-operation.json').exists())
+        self.assertNotIn('prepare',[action for action, _, _ in self.calls])
+
+    def test_profile_change_after_remote_prepare_preserves_original_operation_without_activation(self):
+        allowed = True
+        def validate():
+            if not allowed: raise ValueError('host profile changed')
+        original = self.transport.request
+        def request(action, **kwargs):
+            nonlocal allowed
+            result = original(action, **kwargs)
+            if action == 'prepare': allowed = False
+            return result
+        self.transport.request = request
+        manager = self.manager()
+        manager.profile_validator = validate
+        with self.assertRaisesRegex(ValueError,'--recover'):
+            manager.deploy('example')
+        receipt = json.loads((self.root/'client/apps/example/nas-operation.json').read_text())
+        self.assertEqual(receipt['phase'],'preparing')
+        self.assertNotIn('activate',[action for action, _, _ in self.calls])
 
     def test_changed_data_contract_blocks_before_creating_an_impossible_pending_intent(self):
         self.active = ReleaseDescriptorV1('example', 'b'*40, '1', None, self.descriptor.files, 'old-contract', 'compatible')
@@ -215,6 +268,59 @@ class NasHostLifecycleTests(unittest.TestCase):
         self.assertEqual(len([c for c in self.calls if c[0] == 'activate']), 1)
         self.assertFalse(path.exists())
 
+    def assert_changed_profile_recovery_is_fenced(self, *, activating):
+        self.fail_prepare = not activating
+        self.fail_activate = self.fail_reconcile = activating
+        with self.assertRaises(ValueError): self.manager().deploy('example')
+        path = self.root/'client/apps/example/nas-operation.json'
+        original = path.read_bytes()
+        receipt = json.loads(original)
+        self.assertEqual(receipt['phase'], 'activating' if activating else 'preparing')
+        changed = replace(self.registry, apps=(replace(self.host, environment=(('VITE_PUBLIC_BASE_PATH','/changed/'),)),))
+        self.assertEqual(changed.target, self.registry.target)
+        self.assertEqual(changed.public_origin, self.registry.public_origin)
+        self.fail_prepare = self.fail_activate = self.fail_reconcile = False
+        calls = len(self.calls)
+        with self.assertRaisesRegex(ValueError, 'original host profile'):
+            self.manager(changed).recover('example', receipt['operationId'])
+        self.assertEqual(len(self.calls), calls)
+        self.assertEqual(path.read_bytes(), original)
+        result = self.manager().recover('example', receipt['operationId'])
+        self.assertEqual(result.outcome, 'deployed')
+        self.assertEqual(len([call for call in self.calls if call[0] == 'activate']), 1)
+
+    def test_new_manager_cannot_resume_preparation_under_changed_same_target_profile(self):
+        self.assert_changed_profile_recovery_is_fenced(activating=False)
+
+    def test_new_manager_cannot_finish_activation_under_changed_same_target_profile(self):
+        self.assert_changed_profile_recovery_is_fenced(activating=True)
+
+    def test_explicit_original_profile_digest_is_strict_and_survives_a_new_manager(self):
+        for value in ('', 'A'*64, 'g'*64, True, 123):
+            with self.subTest(value=value), self.assertRaises(ValueError): self.manager(profile_authority=value)
+        self.fail_prepare = True
+        with self.assertRaises(ValueError): self.manager(profile_authority='a'*64).deploy('example')
+        path = self.root/'client/apps/example/nas-operation.json'
+        original = path.read_bytes(); receipt = json.loads(original)
+        self.assertEqual(receipt['profileAuthority'], 'a'*64)
+        self.fail_prepare = False
+        calls = len(self.calls)
+        with self.assertRaisesRegex(ValueError, 'original host profile'):
+            self.manager(profile_authority='b'*64).recover('example',receipt['operationId'])
+        self.assertEqual(len(self.calls),calls); self.assertEqual(path.read_bytes(),original)
+        self.assertEqual(self.manager(profile_authority='a'*64).recover('example',receipt['operationId']).outcome,'deployed')
+
+    def test_unbound_app_receipt_never_gains_authority_from_a_new_manager(self):
+        self.fail_prepare=True
+        with self.assertRaises(ValueError): self.manager().deploy('example')
+        path=self.root/'client/apps/example/nas-operation.json'
+        receipt=json.loads(path.read_bytes());receipt['profileAuthority']=None
+        path.write_text(json.dumps(receipt,sort_keys=True,separators=(',',':')))
+        original=path.read_bytes(); calls=len(self.calls)
+        with self.assertRaisesRegex(ValueError,'original host profile'):
+            self.manager().recover('example',receipt['operationId'])
+        self.assertEqual(path.read_bytes(),original); self.assertEqual(len(self.calls),calls)
+
     def test_wrong_recovery_identity_does_not_touch_remote_state(self):
         self.fail_prepare = True
         with self.assertRaises(ValueError):
@@ -232,6 +338,14 @@ class NasHostLifecycleTests(unittest.TestCase):
         self.assertEqual(status.deployed_commit, self.commit)
         self.assertFalse(self.registry.runtime_root.exists())
         self.assertFalse((self.root/'client').exists())
+
+    def test_fleet_inspector_reads_only_remote_current_and_refuses_another_target_root(self):
+        self.active = self.descriptor
+        inspector = NasLiveReleaseInspector(self.registry, transport=self.transport)
+        self.assertEqual(inspector.inspect(self.registry.runtime_root, 'example'), self.commit)
+        with self.assertRaises(ValueError):
+            inspector.inspect(self.root/'another-host', 'example')
+        self.assertFalse(self.registry.runtime_root.exists())
 
     def test_rollback_uses_retained_remote_descriptor_without_rebuilding_or_restoring_data(self):
         self.active = ReleaseDescriptorV1('example', 'b'*40, '1', None, self.descriptor.files, 'none', 'compatible')

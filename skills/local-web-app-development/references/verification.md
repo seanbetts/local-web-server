@@ -173,3 +173,17 @@ is verified; editing these source references does not install it.
 Use `local-web app doctor --target nas-docker --repository .` for explicit NAS
 source eligibility. This reports recipe/input readiness, independently of the
 currently installed host target, and does not claim Linux startup or live health.
+
+`local-web app check` follows the configured host target; explicit `--target
+nas-docker` performs NAS source checks without a host profile. The disposable
+platform workflow acceptance is:
+
+```sh
+python3 scripts/verify_nas_app_workflow.py --kind static
+python3 scripts/verify_nas_app_workflow.py --kind service --docker-context colima-nas-media-worker-test
+```
+
+The service verifier accepts only that guarded local test VM and refuses shared
+host mounts. It distinguishes actual Mac builds and Linux runtime probes from
+its in-process unavailable-adapter simulation. It publishes no host ports or
+NAS state and removes only resources carrying its unique ownership label.

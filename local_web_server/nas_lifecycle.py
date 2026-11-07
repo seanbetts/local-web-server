@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import stat
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from .config import registered_host, validate_registered_app
 from .deploy import DeploymentResult, RollbackUnavailable
@@ -36,8 +36,33 @@ _LIMIT = 2 * 1024 * 1024
 _UNSET = object()
 
 
+class NasRecoveryRequired(ValueError):
+    """A bounded original-operation identity safe to preserve through the CLI."""
+    def __init__(self, app_id, operation_id):
+        if (type(app_id) is not str or len(app_id)>128 or not re.fullmatch(r'[a-z][a-z0-9]*(?:-[a-z0-9]+)*',app_id)
+                or type(operation_id) is not str or not _OPERATION.fullmatch(operation_id)):
+            raise ValueError('invalid NAS recovery identity')
+        self.app_id,self.operation_id=app_id,operation_id
+        super().__init__(f'NAS operation {operation_id} requires original-operation recovery; '
+                         f'use local-web deploy {app_id} --recover {operation_id}')
+
+
 def _canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+def _registry_authority(registry):
+    """Library callers bind every parsed field; production passes raw-profile SHA."""
+    def encode(value):
+        if isinstance(value, Path):
+            return str(value)
+        raise TypeError('unsupported parsed registry value')
+    try:
+        content = json.dumps(asdict(registry), sort_keys=True, separators=(',', ':'),
+                             allow_nan=False, default=encode).encode()
+    except (TypeError, ValueError) as error:
+        raise ValueError('parsed NAS profile authority is unavailable') from error
+    return hashlib.sha256(content).hexdigest()
 
 
 class NasOperationStore:
@@ -80,8 +105,11 @@ class NasOperationStore:
             if type(value) is not dict or _canonical(value) != content:
                 raise ValueError
             required = {'schemaVersion', 'operationId', 'descriptor', 'expectedCurrent',
-                        'preparedRoot', 'runtimeArchive', 'action', 'phase', 'uploadBlobs'}
+                        'preparedRoot', 'runtimeArchive', 'action', 'phase', 'uploadBlobs', 'profileAuthority'}
             if set(value) != required or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1:
+                raise ValueError
+            authority = value['profileAuthority']
+            if authority is not None and (type(authority) is not str or not _DIGEST.fullmatch(authority)):
                 raise ValueError
             release = ReleaseDescriptorV1.from_dict(value['descriptor'])
             if (release.app_id != self.layout.app_id
@@ -104,7 +132,7 @@ class NasOperationStore:
         except (ValueError, TypeError, KeyError, UnicodeError, RecursionError) as error:
             raise ValueError('invalid NAS operation receipt; preserve it for recovery') from error
 
-    def begin(self, operation_id, descriptor, *, expected_current, prepared_root, runtime_archive, action):
+    def begin(self, operation_id, descriptor, *, expected_current, prepared_root, runtime_archive, action, profile_authority=None):
         existing = self.pending()
         if existing is not None:
             raise ValueError(f"NAS operation {existing['operationId']} requires original-operation recovery")
@@ -112,7 +140,10 @@ class NasOperationStore:
                 or descriptor.app_id != self.layout.app_id or action not in ('deploy', 'rollback')
                 or expected_current is not None and (type(expected_current) is not str or not _DIGEST.fullmatch(expected_current))):
             raise ValueError('invalid NAS operation intent')
+        if profile_authority is not None and (type(profile_authority) is not str or not _DIGEST.fullmatch(profile_authority)):
+            raise ValueError('invalid NAS operation profile authority')
         value = dict(schemaVersion=1, operationId=operation_id, descriptor=descriptor.to_dict(),
+                     profileAuthority=profile_authority,
                      expectedCurrent=expected_current, action=action, phase='preparing', uploadBlobs=None,
                      preparedRoot=str(Path(prepared_root).absolute()) if prepared_root is not None else None,
                      runtimeArchive=str(Path(runtime_archive).absolute()) if runtime_archive is not None else None)
@@ -227,14 +258,18 @@ class NasHostDeploymentManager:
     """Existing app operations using Mac builds and the fixed NAS adapter."""
 
     def __init__(self, registry, *, client_root=None, preparer=None, transport=None, health=None,
-                 repository_factory=GitRepository):
+                 repository_factory=GitRepository, profile_validator=None, profile_authority=None):
         if registry.target.kind != 'nas-docker':
             raise ValueError('NAS lifecycle requires a NAS target')
+        if profile_authority is not None and (type(profile_authority) is not str or not _DIGEST.fullmatch(profile_authority)):
+            raise ValueError('NAS profile authority must be a full SHA-256 digest')
+        self.profile_authority = profile_authority if profile_authority is not None else _registry_authority(registry)
         self.registry = registry
         self.client_root = Path(client_root) if client_root is not None else nas_client_root(registry)
         self.transport = transport or NasTransport(registry.target, timeout_seconds=450)
         self.health = health or HttpHealthChecker()
         self.repository_factory = repository_factory
+        self.profile_validator = profile_validator
 
         def install(*arguments):
             if registry.target.build_context is None:
@@ -243,8 +278,15 @@ class NasHostDeploymentManager:
 
         self.preparer = preparer or NasReleasePreparer(self.client_root/'cache', dependency_installer=install)
 
-    def _publisher(self, store, operation_id, host):
+    def _validate_profile(self, additional=None):
+        if self.profile_validator is not None:
+            self.profile_validator()
+        if additional is not None:
+            additional()
+
+    def _publisher(self, store, operation_id, host, validate_locked=None):
         def public_health(_descriptor):
+            self._validate_profile(validate_locked)
             # Automatic recovery may have selected previous code. Probe the
             # manifest belonging to that observed release rather than guessing
             # its route/health contract from the failed candidate.
@@ -257,9 +299,19 @@ class NasHostDeploymentManager:
             backend = backend_health_path(host, manifest)
             if backend is not None:
                 paths.append(backend)
-            return all(self.health.check(join_public_origin(self.registry.public_origin, path)).healthy for path in paths)
-        return NasDeploymentManager(self.transport, public_health=public_health,
-            before_transition=lambda action: store.before_transition(operation_id, action),
+            result = all(self.health.check(join_public_origin(self.registry.public_origin, path)).healthy for path in paths)
+            self._validate_profile(validate_locked)
+            return result
+        manager = self
+        class ProfileBoundTransport:
+            def request(inner, action, **kwargs):
+                if action != 'status': manager._validate_profile(validate_locked)
+                return manager.transport.request(action, **kwargs)
+        def before_transition(action):
+            self._validate_profile(validate_locked)
+            store.before_transition(operation_id, action)
+        return NasDeploymentManager(ProfileBoundTransport(), public_health=public_health,
+            before_transition=before_transition,
             select_upload_blobs=lambda requested: store.select_upload_blobs(operation_id, requested))
 
     @staticmethod
@@ -267,8 +319,7 @@ class NasHostDeploymentManager:
         try:
             return operation()
         except Exception as error:
-            raise ValueError(f'NAS operation {operation_id} requires reconciliation; '
-                             f'use local-web deploy {app_id} --recover {operation_id}') from error
+            raise NasRecoveryRequired(app_id,operation_id) from error
 
     @staticmethod
     def _complete(store, result, descriptor, action):
@@ -281,7 +332,7 @@ class NasHostDeploymentManager:
             f'{descriptor.app_id} {outcome} on NAS; operation {result.operation_id}', None)
 
     def deploy(self, app_id, from_hook=False, *, expected_commit=None,
-               expected_current_commit=_UNSET, validate_locked=None, **unsupported):
+               expected_current_commit=_UNSET, validate_locked=None, install=None, **unsupported):
         if unsupported:
             raise ValueError('NAS deployment cannot use a macOS service transition')
         host = registered_host(self.registry, app_id)
@@ -291,11 +342,10 @@ class NasHostDeploymentManager:
             return DeploymentResult(app_id, commit, 'skipped', f'{app_id} skipped: automatic deployment is disabled or hook is not on main', None)
         store = NasOperationStore(self.client_root, app_id)
         with store.lock():
+            self._validate_profile(validate_locked)
             pending = store.pending()
             if pending is not None:
-                raise ValueError(f"NAS operation {pending['operationId']} requires original-operation recovery")
-            if validate_locked is not None:
-                validate_locked()
+                raise NasRecoveryRequired(app_id,pending['operationId'])
             if expected_commit is not None and commit != expected_commit:
                 raise ValueError('deployment target changed')
             host, manifest = validate_registered_app(host, repository.manifest_at(commit))
@@ -314,9 +364,21 @@ class NasHostDeploymentManager:
                 destination=self.client_root/'prepared'/app_id/operation_id)
             if prepared.descriptor.source_commit != commit or prepared.descriptor.app_id != app_id:
                 raise ValueError('prepared NAS release does not match its exact source')
+            self._validate_profile(validate_locked)
+            if repository.main_commit() != commit:
+                raise ValueError('main changed during NAS release preparation')
+            if install is not None:
+                install(selected_candidate=prepared)
+                refreshed = _observe(self.transport, app_id).descriptor
+                if (refreshed.digest if refreshed else None) != (current.digest if current else None):
+                    raise ValueError('current NAS app release changed during platform installation')
+                self._validate_profile(validate_locked)
+                if repository.main_commit() != commit:
+                    raise ValueError('main changed during NAS platform installation')
             store.begin(operation_id, prepared.descriptor, expected_current=current.digest if current else None,
-                        prepared_root=prepared.root, runtime_archive=prepared.runtime_archive, action='deploy')
-            result = self._attempt(app_id, operation_id, lambda: self._publisher(store, operation_id, host).deploy(prepared.descriptor, prepared.files_root,
+                        prepared_root=prepared.root, runtime_archive=prepared.runtime_archive, action='deploy',
+                        profile_authority=self.profile_authority)
+            result = self._attempt(app_id, operation_id, lambda: self._publisher(store, operation_id, host, validate_locked).deploy(prepared.descriptor, prepared.files_root,
                 operation_id=operation_id, expected_current=current.digest if current else None,
                 runtime_archive=prepared.runtime_archive))
             return self._complete(store, result, prepared.descriptor, 'deploy')
@@ -325,9 +387,10 @@ class NasHostDeploymentManager:
         host = registered_host(self.registry, app_id)
         store = NasOperationStore(self.client_root, app_id)
         with store.lock():
+            self._validate_profile()
             pending = store.pending()
             if pending is not None:
-                raise ValueError(f"NAS operation {pending['operationId']} requires original-operation recovery")
+                raise NasRecoveryRequired(app_id,pending['operationId'])
             observed = _observe(self.transport, app_id)
             current, previous = observed.descriptor, observed.previous
             if current is None or previous is None:
@@ -337,7 +400,8 @@ class NasHostDeploymentManager:
                 raise ValueError('NAS code rollback requires the same compatible data contract')
             operation_id = uuid.uuid4().hex
             store.begin(operation_id, previous, expected_current=current.digest,
-                        prepared_root=None, runtime_archive=None, action='rollback')
+                        prepared_root=None, runtime_archive=None, action='rollback',
+                        profile_authority=self.profile_authority)
             result = self._attempt(app_id, operation_id, lambda: self._publisher(store, operation_id, host).rollback(previous,
                 operation_id=operation_id, expected_current=current.digest))
             return self._complete(store, result, previous, 'rollback')
@@ -349,6 +413,8 @@ class NasHostDeploymentManager:
             receipt = store.pending()
             if receipt is None or receipt['operationId'] != operation_id:
                 raise ValueError('recovery requires the exact original NAS operation')
+            if receipt['profileAuthority'] != self.profile_authority:
+                raise ValueError(f"NAS operation {operation_id} requires its original host profile before recovery")
             descriptor = ReleaseDescriptorV1.from_dict(receipt['descriptor'])
             result = self._attempt(app_id, operation_id, lambda: self._resume(host, store, receipt, descriptor))
             return self._complete(store, result, descriptor, receipt['action'])
@@ -404,3 +470,20 @@ class NasStatusCollector:
             results.append(AppStatus(host.id, main, deployed, deployed is not None and deployed != main,
                 self.caddy_state, service_state, internal, frontend, backend, None))
         return tuple(results)
+
+
+class NasLiveReleaseInspector:
+    """Fleet pointer inspection through the fixed adapter, with no local paths."""
+
+    def __init__(self, registry, *, transport=None):
+        if registry.target.kind != 'nas-docker':
+            raise ValueError('NAS release inspection requires a NAS target')
+        self.registry = registry
+        self.transport = transport or NasTransport(registry.target, timeout_seconds=450)
+
+    def inspect(self, runtime_root, app_id):
+        if Path(runtime_root) != self.registry.runtime_root:
+            raise ValueError('NAS inspection target changed')
+        registered_host(self.registry, app_id)
+        observed = _observe(self.transport, app_id)
+        return observed.descriptor.source_commit if observed.descriptor else None

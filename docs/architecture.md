@@ -1,7 +1,8 @@
 # Local Web architecture
 
 Local Web turns a set of independent Git repositories into a small application
-catalogue on one macOS account. The framework owns ingress, release composition,
+catalogue, developed and built on one macOS account. Hosting selects Mac or a
+dedicated Docker runtime on the NAS. The framework owns ingress, release composition,
 service supervision, shared UI contracts, and recovery. Each application owns
 its source, manifest, domain behavior, durable data, and authorization rules.
 
@@ -57,6 +58,22 @@ with the destination service. The new reader uses `registry-v2.json` with separa
 `apps` and `services`. `registry-v1.json` retains its original app-only contract for
 open older pages. Both catalogues publish after verified assets and before the
 home page switches; failed publication preserves the prior home page.
+
+NAS builds export exact committed source on the Mac and cache native build
+dependencies separately from Linux dependency images. A narrow fixed adapter
+publishes only missing verified bytes, immutable descriptors and compatible
+current/previous pointers. Backend containers mount read-only code and selected
+per-app state/secrets, with no published host/backend ports. Caddy shares the
+dedicated Tailscale sidecar's network namespace; apps trust only its exact proxy
+address. App data remains outside immutable releases and code rollback.
+
+Original-operation receipts on both machines preserve uncertain outcomes.
+Recovery observes an uncertain transition rather than replaying it; fresh
+internal and public HTTPS health gate completion. Private Mac recovery exports
+preserve pending upload inputs; NAS essentials and app-owned backups preserve
+authoritative data. NAS ingress defaults to blocking writes until explicitly
+enabled after cutover acceptance. See [NAS publication](operations/nas-publication.md)
+for the supported lifecycle and remaining live prerequisites.
 
 ## Ingress modes
 

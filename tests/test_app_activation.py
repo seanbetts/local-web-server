@@ -286,6 +286,120 @@ class AppActivationTests(unittest.TestCase):
             capture_output=True, text=True,
         ).stdout
 
+    def make_nas(self, *, production=True):
+        before = self.registry.read_bytes()
+        payload = json.loads(before)
+        payload.pop('host')
+        payload.update(schemaVersion=3, publicOrigin='https://local.example.ts.net', ingressMode='tailscale-serve',
+            services=[], target=dict(kind='nas-docker', adapterCommand=['/usr/local/bin/example-adapter'],
+                                    networkSubnet='172.30.200.0/24', proxyAddress='172.30.200.2'))
+        self.profile_store.publish_configuration(before, json.dumps(payload).encode())
+        if production:
+            path = self.app/'local-web.json'
+            manifest = json.loads(path.read_text())
+            manifest['production'] = dict(recipeVersion='1', dataContract='none', rollbackPolicy='compatible',
+                runtime=None, nativeDependencies=None, buildCommands=[['true']])
+            path.write_text(json.dumps(manifest))
+
+    def test_nas_preview_retains_read_only_registration_and_stage_contract(self):
+        self.make_nas()
+        activator, installation, deployer = self.activator()
+        before = self.registry.read_bytes()
+        plan = activator.preview(self.app)
+        self.assertEqual(plan.stages, ('validate', 'register', 'install', 'deploy', 'verify'))
+        self.assertEqual(self.registry.read_bytes(), before)
+        self.assertFalse(self.runtime.exists())
+        self.assertEqual(installation.calls, [])
+        self.assertEqual(deployer.calls, [])
+
+    def test_nas_default_deployer_dispatch_has_no_mac_fallback(self):
+        self.make_nas()
+        activator = AppActivator(platform_repository=self.platform)
+        registry = load_registry(self.registry)
+        with patch('local_web_server.app_activation.NasHostDeploymentManager') as nas:
+            self.assertIs(activator.deployer_factory(registry), nas.return_value)
+            nas.assert_called_once_with(registry)
+
+    def test_nas_activation_passes_selected_candidate_to_target_platform_installer(self):
+        self.make_nas()
+        selected = object()
+        calls = []
+        class SelectedDeployer:
+            def deploy(inner, app_id, *, install, validate_locked):
+                validate_locked()
+                install(selected_candidate=selected)
+                validate_locked()
+                return DeploymentResult(app_id, 'a'*40, 'deployed', 'deployed on NAS', None)
+        activator = AppActivator(platform_repository=self.platform, registry_path=self.registry,
+            registrar=FixtureRegistrar(self.registry), profile_store=self.profile_store,
+            install=lambda *args, **kwargs: calls.append((args, kwargs)),
+            deployer_factory=lambda _registry: SelectedDeployer(), verify=lambda *_: None)
+        activator.activate(self.app)
+        self.assertEqual(calls, [((self.platform,), dict(dry_run=False, recover_missing_caddy=True,
+            registry_path=self.registry, selected_candidate=selected))])
+        self.assertFalse(self.runtime.exists())
+
+    def test_default_nas_activation_binds_receipt_to_registered_profile_bytes(self):
+        import hashlib
+        self.make_nas()
+        activator=AppActivator(platform_repository=self.platform,registry_path=self.registry,
+            registrar=FixtureRegistrar(self.registry),profile_store=self.profile_store,verify=lambda *_:None)
+        with patch('local_web_server.app_activation.NasHostDeploymentManager') as nas:
+            nas.return_value.deploy.return_value=DeploymentResult('recipe-notebook','a'*40,'deployed','done',None)
+            activator.activate(self.app)
+        self.assertEqual(nas.call_args.kwargs['profile_authority'],hashlib.sha256(self.registry.read_bytes()).hexdigest())
+
+    def test_normal_nas_activation_refuses_a_profile_changed_during_platform_install(self):
+        self.make_nas()
+        events = []
+        class SelectedDeployer:
+            def deploy(inner, app_id, *, install, **options):
+                validate = options.get('validate_locked', lambda: None)
+                validate()
+                install(selected_candidate=object())
+                validate()
+                events.append('app publication')
+                return DeploymentResult(app_id, 'a'*40, 'deployed', 'deployed on NAS', None)
+        def install(*args, **kwargs):
+            before = self.registry.read_bytes()
+            payload = json.loads(before)
+            payload['runtimeRoot'] = str(self.root/'another-nas-target')
+            self.profile_store.publish_configuration(before,json.dumps(payload).encode())
+            events.append('profile changed')
+        activator = AppActivator(platform_repository=self.platform, registry_path=self.registry,
+            registrar=FixtureRegistrar(self.registry), profile_store=self.profile_store,
+            install=install, deployer_factory=lambda _registry: SelectedDeployer(), verify=lambda *_: None)
+        with self.assertRaises(AppActivationError):
+            activator.activate(self.app)
+        self.assertEqual(events,['profile changed'])
+
+    def test_nas_activation_refuses_changed_active_binding_even_when_original_bytes_stay_equal(self):
+        self.make_nas()
+        events=[]
+        class SelectedDeployer:
+            def deploy(inner,app_id,*,install,validate_locked):
+                validate_locked();install(selected_candidate=object());validate_locked()
+                events.append('published')
+        def install(*args,**kwargs):
+            binding.return_value=self.registry.with_name('other-profile.json')
+        activator=AppActivator(platform_repository=self.platform,registry_path=self.registry,
+            registrar=FixtureRegistrar(self.registry),profile_store=self.profile_store,install=install,
+            deployer_factory=lambda _:SelectedDeployer(),verify=lambda *_:None)
+        with patch('local_web_server.app_activation.resolve_host_profile',return_value=self.registry) as binding:
+            with self.assertRaises(AppActivationError):activator.activate(self.app)
+        self.assertEqual(events,[])
+
+    def test_uncertain_nas_activation_keeps_bounded_original_recovery_command(self):
+        from local_web_server.nas_lifecycle import NasRecoveryRequired
+        self.make_nas()
+        class SelectedDeployer:
+            def deploy(inner,*args,**kwargs):raise NasRecoveryRequired('recipe-notebook','original-operation')
+        activator=AppActivator(platform_repository=self.platform,registry_path=self.registry,
+            registrar=FixtureRegistrar(self.registry),profile_store=self.profile_store,
+            deployer_factory=lambda _:SelectedDeployer(),verify=lambda *_:None)
+        with self.assertRaisesRegex(AppActivationError,'local-web deploy recipe-notebook --recover original-operation'):
+            activator.activate(self.app)
+
     def test_preview_is_read_only_and_lists_the_complete_stage_contract(self):
         activator, installation, deployer = self.activator()
         head = self.git("rev-parse", "HEAD")

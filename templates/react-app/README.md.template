@@ -48,12 +48,12 @@ UI package before preparing a NAS release. Ordinary source changes reuse the
 native dependency artifact; frontend compilation runs on the Mac's native
 platform.
 
-A generated service remains eligible for the Mac target without a NAS recipe.
-NAS preparation requires a supplied app-owned production recipe, pinned Linux
-base image, explicit ABI, Dockerfile and dependency inputs, container argv,
-resource ceilings and data compatibility policy. A declaration alone does not
-supply those files or prove runtime health. Keep credentials in selected private
-secret files and durable records under the configured state binding.
+Generated reference services include a pinned Node 24 Linux recipe, explicit
+ABI, dependency-only Dockerfile, builtin dependency marker, container arguments,
+resource ceilings and compatible `none` data policy. Extend those app-owned
+inputs deliberately when adding dependencies or durable data. A declaration
+alone does not prove runtime health. Keep credentials in selected private secret
+files and durable records under the configured state binding.
 
 NAS deployment, data migration and hostname cutover have separate acceptance
 and approval gates. Source checks do not establish that the NAS is active or

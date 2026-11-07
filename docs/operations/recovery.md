@@ -21,10 +21,11 @@ bin/local-web status
 
 `host status` reports profile/revision metadata without registry contents.
 Ordinary status checks the selected public origin and, for services, the direct
-loopback health path. A loopback success with a failed public check is an
+loopback health path on Mac or fresh bounded remote container readiness on NAS.
+An internal success with a failed public check is an
 ingress failure, not an acceptable substitute.
 
-Inspect exact managed LaunchAgent labels and log paths from generated state.
+For Mac hosting, inspect exact managed LaunchAgent labels and log paths from generated state.
 Avoid broad process-kill or file-removal commands. Application response bodies,
 environment values, and database contents do not belong in diagnostic output.
 
@@ -87,6 +88,13 @@ There is no `--apply` flag: the plain invocation is the separate live operation.
 It generates the Caddyfile, platform assets, LaunchAgents, and managed hooks;
 none should be hand-edited. Validate the generated Caddyfile with the installed
 Caddy 2 binary before loading it.
+
+That description applies to Mac hosting. A configured NAS target dispatches to
+the saved reviewed NAS installation context and a reserved platform publication;
+it does not install LaunchAgents. Missing bootstrap context fails closed. Use
+the [NAS publication runbook](nas-publication.md) for original-operation recovery
+and `host recovery-backup` / `host recovery-verify` for private Mac client inputs.
+Those artifacts complement NAS data backups and do not authorize a restore.
 
 For a clean schema-version-1 rebuild, Caddy is a user LaunchAgent and binds the
 trusted-LAN listener. For schema version 2, installation requires an already

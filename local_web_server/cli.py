@@ -1,6 +1,7 @@
 """The deliberately small, everyday local-web command-line interface."""
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -44,6 +45,7 @@ from .host_profile_backup import (
 from .install import load_main_manifests
 from .models import HostRegistry
 from .nas_lifecycle import NasHostDeploymentManager, NasStatusCollector
+from .nas_client_backup import write_nas_client_backup, verify_nas_client_backup
 from .runtime import DeploymentBusy
 from .service_command_migration import (
     ServiceCommandMigrationError,
@@ -100,6 +102,18 @@ def _registration_profile_store(profile: Path) -> HostProfileStore:
     return HostProfileStore(paths)
 
 
+def _nas_deployment_manager(registry, profile, snapshot):
+    def validate_profile():
+        paths = HostProfilePaths.for_repository(_PLATFORM_REPOSITORY, allow_public_scaffold=True)
+        if paths.profile != profile or resolve_host_profile(_PLATFORM_REPOSITORY) != profile:
+            raise HostProfileError('NAS host profile changed during publication')
+        observed = HostProfileStore(paths, allow_public_scaffold=True).read_snapshot(**_HOST_PROFILE_LIMITS)
+        if observed.profile_bytes != snapshot.profile_bytes or observed.revisions != snapshot.revisions:
+            raise HostProfileError('NAS host profile changed during publication')
+    return NasHostDeploymentManager(registry, profile_validator=validate_profile,
+                                    profile_authority=hashlib.sha256(snapshot.profile_bytes).hexdigest())
+
+
 class _CommandArgumentError(ValueError):
     """A bounded replacement for argparse's caller-controlled diagnostics."""
 
@@ -142,7 +156,7 @@ def build_parser(*, _bounded_errors: bool = False) -> argparse.ArgumentParser:
     data_target.add_argument('--repository', type=Path, default=Path('.'))
     check = app_commands.add_parser("check")
     check.add_argument("--repository", type=Path, default=Path("."))
-    check.add_argument("--target", choices=('macos', 'nas-docker'), default='macos')
+    check.add_argument("--target", choices=('macos', 'nas-docker'))
     update = app_commands.add_parser("update")
     update.add_argument("--repository", type=Path, default=Path("."))
     update.add_argument("--capability", action="append", default=[])
@@ -193,6 +207,10 @@ def build_parser(*, _bounded_errors: bool = False) -> argparse.ArgumentParser:
     host_status.add_argument("--json", action="store_true")
     host_backup = host_commands.add_parser("backup")
     host_backup.add_argument("--output", type=Path)
+    recovery_backup = host_commands.add_parser('recovery-backup')
+    recovery_backup.add_argument('--output',type=Path,required=True)
+    recovery_verify = host_commands.add_parser('recovery-verify')
+    recovery_verify.add_argument('--from',dest='source',type=Path,required=True)
     host_restore = host_commands.add_parser("restore")
     host_restore.add_argument("--from", dest="source", type=Path, required=True)
     host_restore.add_argument("--replace", action="store_true")
@@ -333,11 +351,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"{report.app}: compatible")
                 return 0 if report.compatible else 1
             if args.app_command == "check":
-                if args.target == 'macos':
-                    _load_default_host_profile()
+                target = args.target
+                if target != 'nas-docker':
+                    _path, configured = _load_default_host_profile()
+                    if target is None:
+                        target = configured.target.kind
+                if target == 'macos':
                     checker = AppChecker()
                 else:
-                    checker = AppChecker(doctor=AppDoctor(target_kind=args.target))
+                    checker = AppChecker(doctor=AppDoctor(target_kind=target))
                 report = checker.check(args.repository)
                 print(f"{report.app}: checks passed")
                 return 0
@@ -356,7 +378,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.app_command == "register":
                 registry_path, _registry = _load_default_host_profile()
                 profile_store = _registration_profile_store(registry_path)
-                result = AppRegistrar().register(
+                registrar = (AppRegistrar(doctor=AppDoctor(target_kind='nas-docker'))
+                             if _registry.target.kind == 'nas-docker' else AppRegistrar())
+                result = registrar.register(
                     args.repository,
                     registry_path,
                     profile_store=profile_store,
@@ -394,9 +418,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"ui={result.ui_version} commit={result.commit}"
             )
             return 0
-        _registry_path, registry = _load_default_host_profile()
+        _registry_path, registry, profile_snapshot = _load_default_host_profile_snapshot()
         if args.command == "deploy":
-            manager = NasHostDeploymentManager(registry) if registry.target.kind == 'nas-docker' else DeploymentManager(registry)
+            manager = _nas_deployment_manager(registry, _registry_path, profile_snapshot) if registry.target.kind == 'nas-docker' else DeploymentManager(registry)
             if args.recover is not None:
                 if registry.target.kind != 'nas-docker':
                     raise ValueError('original NAS operation recovery requires the NAS target')
@@ -406,7 +430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(result.message)
             return 0
         if args.command == "rollback":
-            manager = NasHostDeploymentManager(registry) if registry.target.kind == 'nas-docker' else DeploymentManager(registry)
+            manager = _nas_deployment_manager(registry, _registry_path, profile_snapshot) if registry.target.kind == 'nas-docker' else DeploymentManager(registry)
             if args.recover is not None:
                 if registry.target.kind != 'nas-docker':
                     raise ValueError('original NAS operation recovery requires the NAS target')
@@ -469,7 +493,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_host(args: argparse.Namespace) -> int:
+    if args.host_command == 'recovery-verify':
+        report = verify_nas_client_backup(args.source)
+        payload = {key:report[key] for key in ('verified','profileSha256','pendingOperations','files')}
+        print(json.dumps(dict(kind='nas-client-recovery',**payload),sort_keys=True,separators=(',',':')))
+        return 0
     commands = HostCommands(args.platform_repository) if args.host_command == "migrate-registry" else HostCommands()
+    if args.host_command == 'recovery-backup':
+        report = write_nas_client_backup(commands.paths,args.output)
+        payload = {key:report[key] for key in ('verified','profileSha256','pendingOperations','files','bytes')}
+        print(json.dumps(dict(kind='nas-client-recovery',**payload),sort_keys=True,separators=(',',':')))
+        return 0
     if args.host_command == "status":
         payload = commands.status().as_dict()
         if args.json:

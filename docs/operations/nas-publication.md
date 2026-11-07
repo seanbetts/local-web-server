@@ -19,6 +19,10 @@ These commands verify source compatibility and the app's local check/browser
 matrix. They do not establish Linux startup, data compatibility, installed NAS
 health or a completed migration.
 
+Platform installation apply requires clean committed framework `main`, for both
+Mac and NAS targets. Pure preparation and dry-run previews can inspect committed
+source branches without publishing them.
+
 ## Publication and status
 
 The configured host profile chooses the lifecycle. A `nas-docker` profile routes
@@ -46,6 +50,10 @@ readiness. Unknown observations remain unhealthy in the CLI.
 A private Mac receipt is durable before preparing the remote operation and
 before requesting a serving transition. The NAS also fences each app to its
 original operation. A new publication cannot bypass an unresolved receipt.
+Receipts bind the original profile authority. A fresh process using changed
+host settings cannot resume its mutations or complete its receipt; retain the
+original files and reconcile that authority first. Activation errors preserve
+the bounded operation identifier and supported recovery command.
 
 When publication reports an operation requiring reconciliation, use that exact
 identifier:
@@ -71,6 +79,24 @@ support directory, separately from the NAS runtime root. Do not remove them to
 bypass recovery. The NAS retains current/previous releases and their dependency
 artifacts; cleanup never invokes a global Docker prune.
 
+Before a NAS client transition, export a private recovery artifact:
+
+```sh
+local-web host recovery-backup --output /private/path/new-client-recovery.tar
+local-web host recovery-verify --from /private/path/new-client-recovery.tar
+```
+
+The existing destination must not exist. The export includes the supported
+profile/history backup, installation context, operation receipts and the exact
+prepared bytes needed by pending operations. Completed app code and rebuildable
+caches are excluded. Capture refuses busy or changing client state and verifies
+the new artifact before reporting success. Verification uses a disposable local
+directory and needs neither the current host profile nor NAS access; it performs
+no restore. The artifact contains private paths and recovery metadata, has mode
+0600 and a 2 GiB payload limit, and belongs in private backup storage. Preserve
+its original path mappings for a separately reviewed recovery. It does not back
+up NAS app data, secrets or Tailscale state; those need NAS backup coverage.
+
 ## Data and hostname boundaries
 
 Ordinary deployment refuses a changed data contract or `migration-required`
@@ -78,6 +104,131 @@ recipe. Code rollback never restores a database, JSON state, uploaded media or
 secrets. After production writes have moved to the NAS, returning to Mac service
 requires the app's fenced latest-state copy/restore procedure.
 
+NAS ingress defaults to a write fence (`target.writesEnabled: false`): GET,
+HEAD and OPTIONS remain available, while other methods receive an uncached 503
+before reaching the app. Read-only production acceptance must finish before an
+explicit reviewed configuration enables writes. Disposable shadow fixtures may
+use their own explicitly enabled profile.
+
 This lifecycle does not rename Tailscale nodes, change grants, enable Funnel,
 adopt legacy state or authorize a second writer. Follow the concrete migration
 preview for those separately reviewed effects.
+
+## Prepared NAS platform installation
+
+`prepare_nas_platform` builds only the System Index and UI gallery on the Mac,
+loads the committed theme, and returns one immutable `local-web-platform`
+release plus a proposed directory/ownership plan. It never starts a NAS service.
+`preview_nas_installation` wraps these exact bytes in a versioned approval
+capsule: platform/config digests, expected current and previous config digest,
+private profile revision, permission-plan digest, prerequisite evidence digest,
+and optional full exact selected app descriptor. The capsule digest is the review/apply
+identity. Missing Docker-feature, subnet, private-storage, permission, backup,
+host-profile-export or hostname-inventory evidence is listed as missing; source
+tests and generated files do not verify those prerequisites.
+
+`apply_nas_installation` accepts that exact approved capsule digest and an
+explicitly injected publication manager. `NasPlatformInstallationSession` adds
+a separate durable reserved-platform operation receipt, exact original files
+and capsule, and original upload selection. Recovery checks original status,
+resumes a still-prepared upload, or reconciles an uncertain activation without
+replaying it. Platform failure does not create a selected app deployment
+receipt. These library APIs are not a privileged bootstrap command. The private
+adapter's production callbacks remain disabled by default.
+
+The existing six-action protocol carries an optional `installationApproval`
+only on reserved-platform `prepare`. The private engine saves it under the
+original platform fence and permits only its exact retry. Its separately
+configured approval callback validates the original fence, expected current,
+materialized descriptor and complete fixed config bytes before writing an
+immutable config-digest-keyed approval. It starts no services and switches no
+serving pointer. Prior approvals are retained so code rollback can authorize the
+previous configuration; ordinary publication cannot rewrite a mutable root
+approval marker. A reviewed baseline marker authorizes only its exact config.
+
+After an approved bootstrap has seeded the private Mac client context,
+`install_platform(..., selected_candidate=prepared_app)` dispatches a NAS target
+before any Mac installer/LaunchAgent/skill route. The default refresh uses the
+saved pinned frontdoor images and observed prerequisite identities. For every
+unselected app it loads the manifest at the actual remote descriptor's source
+commit and resolves runtime metadata only from retained versions whose exact
+`.local-web-runtime.json` bytes match that descriptor. It never builds apps or
+adopts their unselected main-branch recipes. The selected prepared app replaces
+only its own runtime slot. Unknown metadata/configuration or an absent bootstrap
+context stops with a preparation error. A healthy confirmed platform publication
+saves the next context, retaining prior and candidate runtime versions for app
+rollback. The context and platform operation artifacts belong in the private Mac
+client backup alongside the supported `local-web host backup` profile/history
+export; they contain metadata and secret names, not secret values.
+
+Ordinary refresh rejects changes to an existing app's runtime user, selected
+secret names, port, CPU/memory ceilings, health runtime, route or health/proxy
+policy. Such changes need their own reviewed migration and recovery policy.
+Source/image/command changes with unchanged policy retain old app runtime
+compatibility under the new platform configuration. App rollback never blindly
+rolls the whole platform back over other apps' changes.
+
+The preparation report includes essentials coverage for dedicated Tailscale
+identity/state, selected secrets, versioned approvals, operation receipts and
+release descriptors/generation pointers; a consistent app backup/restore route
+must cover authoritative state, uploads/media and reference integrity. Verified
+code/image/build caches are rebuildable exclusions. This is a coverage plan,
+not a claim that the NAS backup selection has been applied or restore tested.
+The hostname procedure uses three explicit distinct names: current production
+Mac, retained Mac and temporary dedicated NAS. It preserves existing identities
+and NAS media access, rehearses TLS/grants/Serve/no-Funnel on the temporary node,
+and specifies forward/reverse renames and public health checks. Live installation,
+backup changes, identity handoff and writer cutover remain separately approved.
+
+The private bootstrap source route is `nas_local_web_install.py` with fixed
+preview/apply/status/input-stage, retained authentication, an original pre-root journal and
+immutable installed source bundle. It requires exact preprovisioned dedicated
+Tailscale state/secrets and externally reviewed prerequisite observations; it
+performs no Tailnet login or service start. Its only success claim is
+`installed-configured`. The reviewed host-profile adapter command must explicitly
+select `nas_local_web.py --installed` to enable the verified installed callbacks.
+Initial public preparation seeds `SavedNasInstallationContext` through the
+reserved-platform session's `next_context`; missing context never falls back to
+Mac service installation. Preview inspects exact pinned Caddy/Tailscale image cache state. Initial bootstrap
+may add only explicitly reviewed missing official vendor references by digest
+with `--platform linux/amd64`; it records and reconciles the original import
+intent. Ordinary publication retains `--pull never`.
+
+
+The bootstrap default preflight is a fixed live read-only observation producer,
+not a set of caller assertions: it checks Docker/Compose features, selected
+project/subnet conflicts, exact volume/storage/UID identities and capacity.
+Stable facts are digest-bound; memory/free-space checks use reviewed minima,
+while the full observation snapshot gets an audit digest. Its explicit input
+stage validates only declared private local files and SCPs missing bytes to the
+fixed original-operation directory. It never enrolls a Tailscale identity.
+
+A standard generated none-data service with user `10001:10001` and no secrets
+can use ordinary activation after bootstrap. Its full prepared descriptor and
+exact permission plan authorize only its missing empty state directory under
+the separate platform operation fence. Authoritative data apps and policy or
+contract changes still require their explicit migration route. Existing state
+is preserved; unknown directories are not adopted.
+
+The platform session checks the same profile authority before remote mutations,
+transition markers, health/finish and saved-context publication. If authority
+changes after prepare, its original receipt remains and recovery may observe
+status but cannot issue another mutation under the stale profile. A completed
+healthy rollback is reported as failure of the requested platform change, so app
+publication stops. The maintained installer entry point formats NAS preview and
+publication results directly; it does not expect Mac installer/skill results.
+
+
+The temporary-to-canonical origin handoff is explicitly pending. Installed
+markers and saved contexts retain one exact origin; the current client namespace
+also includes it. A reviewed transition must relocate/bind context and reactivate
+backends under the new origin once actual rehearsal identity facts are available.
+Bootstrap does not silently widen this guard. The private helper's fixed
+source-upgrade preview/apply/status route can install later reviewed helper
+code: it binds exact old/new three-file bundles, retains the old bundle, refuses
+pending operations, and switches the verified marker atomically under the
+installation gate. It preserves target, configuration approvals, identity and
+state policy, and runs no service or Docker operation. This source-maintenance
+route does not perform hostname handoff. First live bootstrap still requires
+real prerequisite evidence and separate operational approval; source checks
+alone do not establish readiness.

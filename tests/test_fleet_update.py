@@ -394,6 +394,38 @@ class _Activator:
 
 
 class FleetUpdaterTests(unittest.TestCase):
+    def test_nas_ineligible_recipe_blocks_before_any_platform_update(self):
+        repository = self.make_app('example')
+        self.repositories['example'] = repository
+        path = self.write_registry(('example',))
+        payload = json.loads(path.read_text())
+        payload.pop('host')
+        payload.update(schemaVersion=3, publicOrigin='https://local.example.ts.net', ingressMode='tailscale-serve',
+            services=[], target=dict(kind='nas-docker', adapterCommand=['/usr/local/bin/example-adapter'],
+                                    networkSubnet='172.30.200.0/24', proxyAddress='172.30.200.2'))
+        path.write_text(json.dumps(payload))
+        updater = _Updater({}, set())
+        plan = FleetUpdater(updater_factory=lambda: updater,
+            committer=_Committer({repository:'a'*40})).preview(path)
+        self.assertEqual(plan.apps[0].status, 'BLOCKED')
+        self.assertEqual(plan.apps[0].reason, 'nas-production-ineligible')
+        self.assertEqual(updater.requests, [])
+
+    def test_nas_fleet_default_dispatch_uses_remote_inspection_without_mac_layout(self):
+        path = self.write_registry(())
+        payload = json.loads(path.read_text())
+        payload.pop('host')
+        payload.update(schemaVersion=3, publicOrigin='https://local.example.ts.net', ingressMode='tailscale-serve',
+            services=[], target=dict(kind='nas-docker', adapterCommand=['/usr/local/bin/example-adapter'],
+                                    networkSubnet='172.30.200.0/24', proxyAddress='172.30.200.2'))
+        path.write_text(json.dumps(payload))
+        with patch('local_web_server.fleet_update.NasLiveReleaseInspector') as nas, \
+             patch('local_web_server.fleet_update.RuntimeLiveReleaseInspector') as mac:
+            plan = FleetUpdater().preview(path)
+        self.assertEqual(plan.apps, ())
+        nas.assert_called_once()
+        mac.assert_not_called()
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -1271,6 +1303,38 @@ class FleetUpdaterTests(unittest.TestCase):
                         result.apps[0].deployed_commit,
                         result.apps[0].source_head,
                     )
+
+    def test_nas_partial_fleet_failure_recovers_selected_source_and_continues(self):
+        failed_id, later_id = 'nas-failed', 'nas-later'
+        for app_id in (failed_id, later_id):
+            repository = self.make_repository(app_id, platform=True)
+            self.repositories[app_id] = repository
+            path = repository/'local-web.json'
+            manifest = json.loads(path.read_text())
+            manifest['production'] = dict(recipeVersion='1', dataContract='none', rollbackPolicy='compatible',
+                runtime=None, nativeDependencies=None, buildCommands=[['true']])
+            path.write_text(json.dumps(manifest))
+            self.git(repository, 'add', '--', 'local-web.json')
+            self.git(repository, 'commit', '-m', 'NAS fixture production contract')
+        failed, later = (self.repositories[app_id] for app_id in (failed_id, later_id))
+        fleet, registry, events, *_ = self.make_apply_fleet((failed_id, later_id),
+            {failed:(self.make_refresh_plan(failed_id),), later:(self.make_refresh_plan(later_id),)},
+            activation_failures={1})
+        payload = json.loads(registry.read_text())
+        payload.pop('host')
+        payload.update(schemaVersion=3, publicOrigin='https://local.example.ts.net', ingressMode='tailscale-serve',
+            services=[], target=dict(kind='nas-docker', adapterCommand=['/usr/local/bin/example-adapter'],
+                                    networkSubnet='172.30.200.0/24', proxyAddress='172.30.200.2'))
+        registry.write_text(json.dumps(payload))
+        before = _tree_snapshot(self.runtime)
+        result = fleet.apply(registry)
+        self.assertEqual([(item.status, item.reason) for item in result.apps],
+                         [('FAILED_RECOVERED', 'activation-failed'), ('UPDATED', None)])
+        self.assertEqual((failed/'tracked.txt').read_bytes(), b'base\n')
+        self.assertFalse((failed/'generated.txt').exists())
+        self.assertEqual(self.git(failed, 'status', '--porcelain=v1'), '')
+        self.assertIn(('update', later_id), events)
+        self.assertEqual(_tree_snapshot(self.runtime), before)
 
     def test_any_failed_compensation_stops_before_the_following_app(self):
         stages = (
