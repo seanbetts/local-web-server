@@ -58,6 +58,22 @@ class NasReleasePreparationTests(unittest.TestCase):
             NasReleasePreparer(self.root/'cache').prepare(host, commit=commit, destination=target)
         self.assertFalse(target.exists())
 
+    def test_native_build_context_supplies_exact_source_revision_without_git_metadata(self):
+        host, _ = self.source()
+        manifest = json.loads((self.repository/'local-web.json').read_text())
+        manifest['build']['environment'].append('PUBLIC_LOCAL_WEB_SOURCE_COMMIT')
+        manifest['production']['buildCommands'] = [[sys.executable, '-c',
+            "import os; from pathlib import Path; assert not Path('.git').exists(); Path('dist').mkdir(); Path('dist/index.html').write_text(os.environ['PUBLIC_LOCAL_WEB_SOURCE_COMMIT'])"]]
+        (self.repository/'local-web.json').write_text(json.dumps(manifest))
+        import subprocess
+        subprocess.run(['git', '-C', str(self.repository), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(self.repository), 'commit', '-qm', 'exact build context'], check=True)
+        commit = subprocess.check_output(['git', '-C', str(self.repository), 'rev-parse', 'HEAD'], text=True).strip()
+        host = replace(host, environment=(('PUBLIC_LOCAL_WEB_SOURCE_COMMIT', 'ambient-value'),))
+        prepared = NasReleasePreparer(self.root/'cache', native_platform=NativePlatformIdentity('darwin', 'arm64', '137')).prepare(
+            host, commit=commit, destination=self.root/'prepared')
+        self.assertEqual((prepared.files_root/'index.html').read_text(), commit)
+
     def test_replace_refs_cannot_substitute_a_different_build_recipe(self):
         host, original = self.source()
         import subprocess

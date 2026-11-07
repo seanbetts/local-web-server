@@ -62,7 +62,7 @@ class NasReleasePreparer:
         if destination.exists() or destination.is_symlink():
             raise FileExistsError('prepared NAS release already exists')
         public = build_environment(manifest, host, {})
-        runner = self.runner or ProcessRunner(public_environment=public)
+        runner = self.runner or ProcessRunner(public_environment={**public, 'PUBLIC_LOCAL_WEB_SOURCE_COMMIT': commit})
         runtime_archive = None
         runtime_identity = None
         runtime_spec = None

@@ -180,6 +180,12 @@ When a valid app architecture exceeds the platform contract, stop at the ownersh
 
 ## NAS production source contract
 
+Production builds use an exact committed source export without Git metadata.
+The platform supplies `PUBLIC_LOCAL_WEB_SOURCE_COMMIT` from that pinned commit
+for shared interactive-export packaging. It overrides any app environment value;
+apps must not infer or substitute a checkout's current revision. Ordinary local
+development retains the Git revision lookup.
+
 A Mac-compatible app is not automatically eligible for NAS publication. Preserve
 an existing app-owned `production` object during ordinary platform updates. Do
 not infer a Linux recipe from a Mac `build.commands` or `service.startCommand`.

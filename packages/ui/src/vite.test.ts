@@ -190,6 +190,22 @@ describe('interactive export Vite integration', () => {
     const {templateUrl: _url, ...identity} = descriptor;
     expect(JSON.parse(atob(metadata.getAttribute('content')!))).toEqual(identity);
   });
+  it('packages an exact source export with the platform supplied revision and no Git metadata', async () => {
+    const root = interactiveFixture();
+    rmSync(join(root, '.git'), {recursive: true});
+    vi.stubEnv('PUBLIC_LOCAL_WEB_SOURCE_COMMIT', 'a'.repeat(40));
+    const plugin = publicVite.localWebInteractiveExport({appId: 'records', contract: './contract.ts', entry: './offline.tsx'});
+    await resolvePlugin(plugin, root, '/records/');
+    const {result} = await transformTags(plugin) as {result: Array<{attrs: Record<string, string>}>};
+    const source = new DOMParser().parseFromString(`<meta name="local-web-interactive-export-descriptor" content="${result[0].attrs.content}">`, 'text/html');
+    expect(readInteractiveExportTemplateDescriptor(source).sourceRevision).toBe('a'.repeat(40));
+  });
+  it.each(['', 'a'.repeat(41), 'b'.repeat(63), 'ref:main', 'A'.repeat(40)])('rejects an invalid explicit source revision %s', async (revision) => {
+    const root = interactiveFixture();
+    vi.stubEnv('PUBLIC_LOCAL_WEB_SOURCE_COMMIT', revision);
+    const plugin = publicVite.localWebInteractiveExport({appId: 'records', contract: './contract.ts', entry: './offline.tsx'});
+    await expect(resolvePlugin(plugin, root, '/records/')).rejects.toThrow();
+  });
 
   it.each(['app disagreement', 'invalid contract', 'missing offline import', 'missing package', 'missing revision', 'external base'])('rejects %s safely', async (failure) => {
     const root = interactiveFixture();
@@ -214,6 +230,7 @@ const LIGHT_SURFACE = '#FFFFFF';
 const DARK_SURFACE = '#19202B';
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 

@@ -362,10 +362,10 @@ export function localWebInteractiveExport(options: InteractiveExportViteOptions)
         const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
         if (manifest.id !== options.appId) fail();
         const appPackage = JSON.parse(readFileSync(packageFile, 'utf8'));
-        const sourceRevision = execFileSync('git', ['-C', config.root, 'rev-parse', 'HEAD'], {
+        const sourceRevision = process.env.PUBLIC_LOCAL_WEB_SOURCE_COMMIT ?? execFileSync('git', ['-C', config.root, 'rev-parse', 'HEAD'], {
           encoding: 'utf8', timeout: 5000, maxBuffer: 1024, stdio: ['ignore', 'pipe', 'pipe'],
         }).trim();
-        if (!/^[a-f0-9]{40,64}$/.test(sourceRevision)) fail();
+        if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sourceRevision)) fail();
         contractModule = realpathSync(resolve(config.root, options.contract));
         const {runnerImport} = await import('vite');
         const imported = await runnerImport<{ contract?: InteractiveExportContract<ContextJson, ContextJson>; default?: InteractiveExportContract<ContextJson, ContextJson> }>(contractModule, {
