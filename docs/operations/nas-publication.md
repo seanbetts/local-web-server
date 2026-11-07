@@ -278,7 +278,8 @@ state policy, and runs no service or Docker operation. This source-maintenance
 route does not perform hostname handoff. First live bootstrap still requires
 real prerequisite evidence and separate operational approval; source checks
 alone do not establish readiness.
-# Staging before a data or origin handoff
+
+## Staging before a data or origin handoff
 
 Installation-owned cutover tools may call `NasDeploymentManager.stage()` to
 prepare and upload the exact release under its original operation without
@@ -287,4 +288,3 @@ receipt, frozen inputs and upload selection. After the separately fenced data
 copy, `activate_staged()` requests the explicit first activation with the usual
 transition, public HTTPS and finish gates. It is not a recovery shortcut:
 interrupted activation uses original-operation status reconciliation.
-
