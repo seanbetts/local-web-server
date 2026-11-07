@@ -109,6 +109,11 @@ recipe. Code rollback never restores a database, JSON state, uploaded media or
 secrets. After production writes have moved to the NAS, returning to Mac service
 requires the app's fenced latest-state copy/restore procedure.
 
+Prepared `host configure` profiles may pause or restore managed apps’
+`autoDeploy` flags while preserving all app identities and execution settings.
+The operation retains the previous profile and requires the exact preview
+revision and candidate digest.
+
 NAS ingress defaults to a write fence (`target.writesEnabled: false`): GET,
 HEAD and OPTIONS remain available, while other methods receive an uncached 503
 before reaching the app. Read-only production acceptance must finish before an

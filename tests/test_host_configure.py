@@ -58,6 +58,22 @@ class HostConfigureTests(StoreFixture):
                     self.preview()
         self.assertEqual(self.store.read_current(), BEFORE)
 
+    def test_configuration_can_pause_and_restore_auto_deploy_without_changing_app_identity(self):
+        before = canonical_json_bytes(dict(json.loads(BEFORE), apps=[dict(id='example', repository='/tmp/example', autoDeploy=True)]))
+        self.store.publish_registration('example', BEFORE, before)
+        self.payload['apps'] = [dict(id='example', repository='/tmp/example', autoDeploy=False)]
+        self.write_source()
+        self.commands.apply(self.preview())
+        self.assertFalse(json.loads(self.store.read_current())['apps'][0]['autoDeploy'])
+        self.payload['apps'][0]['autoDeploy'] = True
+        self.write_source()
+        self.commands.apply(self.preview())
+        self.assertTrue(json.loads(self.store.read_current())['apps'][0]['autoDeploy'])
+        self.payload['apps'][0]['repository'] = '/tmp/another-repository'
+        self.write_source()
+        with self.assertRaises(HostCommandError):
+            self.preview()
+
     def test_configuration_allows_runtime_root_change_and_marks_it_without_paths(self):
         self.payload['runtimeRoot'] = '/tmp/new-runtime'
         self.write_source()

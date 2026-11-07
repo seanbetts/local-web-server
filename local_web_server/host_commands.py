@@ -274,10 +274,15 @@ class HostCommands:
         selected, content, identity = _read_source(source)
         current = load_registry(_RegistryText(snapshot.profile_bytes))
         candidate = load_registry(_RegistryText(content))
+        # Configuration may pause deployment hooks for a host migration while
+        # preserving every managed app identity and execution setting.
+        def managed_apps(document):
+            return [{key: value for key, value in app.items() if key != "autoDeploy"}
+                    for app in json.loads(document)["apps"]]
         if (candidate.schema_version != 3
                 or candidate.public_origin != current.public_origin
                 or candidate.ingress_mode != current.ingress_mode
-                or json.loads(content)["apps"] != json.loads(snapshot.profile_bytes)["apps"]):
+                or managed_apps(content) != managed_apps(snapshot.profile_bytes)):
             raise HostCommandError("prepared configuration must preserve origin, ingress and managed apps")
         plan = self._plan("configure", "already-current" if content == snapshot.profile_bytes else "configure-profile",
                           "prepared-registry", content=content, snapshot=snapshot,
