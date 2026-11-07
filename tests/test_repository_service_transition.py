@@ -82,6 +82,22 @@ class RecordingActivationExecutor:
 
 
 class RepositoryServiceTransitionVerifierTests(unittest.TestCase):
+    def test_custom_mac_service_transition_drops_the_generated_static_nas_recipe(self):
+        from local_web_server.app_template import render_template
+        from local_web_server.config import load_manifest
+        from local_web_server.nas_recipe import require_nas_recipe
+        from tests.test_app_template import recipe_inputs
+        from tests.helpers import init_git_repo
+        with tempfile.TemporaryDirectory() as text:
+            app=Path(text)/'notes';app.mkdir()
+            files={item.path.as_posix():item.content for item in render_template(recipe_inputs())}
+            init_git_repo(app,files)
+            transition_verifier._write_service_commit(app)
+            manifest=load_manifest(app/'local-web.json')
+            self.assertEqual(manifest.kind,'service')
+            self.assertIsNone(manifest.production)
+            with self.assertRaises(ValueError):require_nas_recipe(manifest.production,kind=manifest.kind)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

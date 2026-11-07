@@ -220,6 +220,13 @@ To convert an already registered static app, commit the service manifest, run
 run `"$LOCAL_WEB" app activate --repository . --apply`. Do not hand-edit the
 registry to perform the conversion.
 
+Changing kind also changes the app-owned production contract. Replace a static
+`production` declaration with a reviewed service recipe before NAS activation;
+a service cannot retain the static `runtime: null` declaration. A conversion
+intended only for Mac may remove that stale declaration and remains ineligible
+for NAS until its runtime, persistent data and proxy contract are supplied.
+Do not copy a generated `none` data contract onto a backend with durable data.
+
 
 ## NAS service recipe and readiness
 

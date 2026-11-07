@@ -431,6 +431,9 @@ def _write_service_commit(app_repository: Path) -> None:
     manifest_path = app_repository / "local-web.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["kind"] = "service"
+    # This custom repository-data backend deliberately proves the Mac lifecycle.
+    # Its former static NAS recipe cannot authorize a service/data contract.
+    manifest.pop("production", None)
     manifest["healthPath"] = f'{manifest["route"]}/healthz'
     manifest["build"]["output"] = "release"
     manifest["build"]["release"] = [
