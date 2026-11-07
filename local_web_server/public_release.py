@@ -218,19 +218,19 @@ _APPROVED_ASSET_DIGESTS = {
         "1aa9e87aaa312497ab98aa78c4f1c4abef091500dd21791867c8c6ba1486345f"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-dark-desktop.png": (
-        "a67791ac3b4e84f3a1e6fc7aed43da2ce852d71708f9892d2387ed223eeacde7"
+        "8d19860106cb35ee6dcacf7755c0beac60cea76b565810b957686e5ee4eaf03f"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-dark-mobile.png": (
-        "d513b6b734c65de773a78fd3798e68a61d9c5e475322016dd8ec1a723d576c16"
+        "f8df7ebcc8a1b1012ffd8c21f0d91f5f7ef8844b999c8a2212c19193aac0a9fb"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-light-compact.png": (
         "7ae3a8f8ab20fbbd700dab56239fbc1883a9701d9f244981dc3456f22c907ee5"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-light-desktop.png": (
-        "7a5165b82b671fc49639996c812c70f9fba5b5e1591394a8deed11f6fa1cfdb5"
+        "7db837f23816102fef94e29f44e5fa157885ab54c00c093a3c45f43c86ce2d36"
     ),
     "examples/ui-gallery/tests/snapshots/gallery-light-mobile.png": (
-        "c70b8fd50cefb1bb2d8eee90dcc57846ede203b5f9ed335f599066382f5eabb0"
+        "f46a5e2968734be5c5277111972e15e1aebaf8ce0bc604cc64f8e45951ed4140"
     ),
 }
 _APPROVED_ASSET_PATHS = frozenset(_APPROVED_ASSET_DIGESTS)
@@ -871,6 +871,11 @@ def _is_credential_path(relative: str) -> bool:
 
 
 def _is_generated_path(relative: str) -> bool:
+    if relative in {
+        'templates/react-app/runtime/Dockerfile.service-template',
+        'templates/react-app/runtime/dependencies.json.service-template',
+    }:
+        return False
     pure = PurePosixPath(relative)
     folded_parts = {part.casefold() for part in pure.parts}
     name = pure.name.casefold()

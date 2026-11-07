@@ -780,6 +780,7 @@ class PublicTrackedTreeTests(PublicReleaseTestCase):
             "local_web_server/__pycache__/module.pyc",
             "coverage/report.json",
             "packages/ui/cache.tsbuildinfo",
+            "templates/react-app/runtime/state.json",
         )
         for index, relative in enumerate(paths):
             with self.subTest(relative=relative), tempfile.TemporaryDirectory(
@@ -791,6 +792,13 @@ class PublicTrackedTreeTests(PublicReleaseTestCase):
                 self.assert_rule(
                     "path.generated", lambda: verify_public_tree(repository.path)
                 )
+
+    def test_accepts_only_the_two_maintained_runtime_source_templates(self):
+        for relative in ('templates/react-app/runtime/Dockerfile.service-template',
+                         'templates/react-app/runtime/dependencies.json.service-template'):
+            self.repository.write(relative, b'public source template\n')
+        self.repository.commit('add maintained runtime source templates')
+        verify_public_tree(self.repository.path)
 
     def test_rejects_tracked_symlinks_and_gitlinks(self):
         link = self.repository.path / "docs/link.md"
