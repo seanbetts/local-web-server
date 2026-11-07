@@ -133,6 +133,66 @@ def _validate_image_annotations(value):
             _reserved_image_tag(value[name])
 
 
+def validate_tar_headers(stream, total: int, *, allow_directories: bool = False,
+                         maximum_members: int = 100000) -> None:
+    """Preflight our fixed uncompressed tar subsets before tarfile extensions run.
+
+    Read only one 512-byte header at a time and seek over bounded member data.
+    GNU/PAX/sparse/unknown extensions and base-256 sizes never reach tarfile.
+    """
+    if (type(total) is not int or total < 1024 or total % 512
+            or type(maximum_members) is not int or maximum_members < 1):
+        raise ValueError('tar archive is truncated or unsupported')
+    stream.seek(0)
+    count = 0
+    while stream.tell() + 512 <= total:
+        header = stream.read(512)
+        if len(header) != 512: raise ValueError('tar header is truncated')
+        if header == bytes(512):
+            if not count or stream.read(512) != bytes(512): raise ValueError('tar end markers are invalid')
+            remaining = total - stream.tell()
+            while remaining:
+                data = stream.read(min(remaining, 1024 * 1024))
+                if not data or any(data): raise ValueError('tar trailer is invalid')
+                remaining -= len(data)
+            stream.seek(0)
+            return
+        kind = header[156:157]
+        if kind not in (b'0', b'\0', b'5') or header[124] & 128:
+            raise ValueError('tar extensions and base-256 sizes are unsupported')
+        size_field = header[124:136].strip(b'\0 ') or b'0'
+        checksum_field = header[148:156].strip(b'\0 ')
+        if not re.fullmatch(rb'[0-7]+', size_field) or not re.fullmatch(rb'[0-7]+', checksum_field):
+            raise ValueError('tar numeric header is invalid')
+        size = int(size_field, 8)
+        unsigned = sum(header[:148]) + 8 * 32 + sum(header[156:])
+        signed = sum(value if value < 128 else value - 256 for value in header[:148] + header[156:]) + 8 * 32
+        if int(checksum_field, 8) not in (unsigned, signed): raise ValueError('tar header checksum is invalid')
+        # tarfile treats old NUL-type slash names as directories. Directory data
+        # would otherwise make its next-header offset disagree with preflight.
+        directory = kind == b'5' or header[:100].split(b'\0', 1)[0].endswith(b'/')
+        if directory and (not allow_directories or size): raise ValueError('tar directory header is unsupported')
+        offset = stream.tell() + ((size + 511) // 512) * 512
+        count += 1
+        if offset > total - 1024 or count > maximum_members:
+            raise ValueError('tar member offset or count exceeds its bound')
+        stream.seek(offset)
+    raise ValueError('tar archive end markers are truncated')
+
+
+@contextmanager
+def _preflighted_docker_stream(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as raw:
+        before = os.fstat(raw.fileno())
+        if not stat.S_ISREG(before.st_mode): raise ValueError('Docker-save archive must be regular')
+        validate_tar_headers(raw, before.st_size, allow_directories=True)
+        digest = hashlib.sha256()
+        while chunk := raw.read(1024 * 1024): digest.update(chunk)
+        raw.seek(0)
+        yield raw, digest.hexdigest()
+
+
 def verify_docker_archive(path: Path, *, maximum_layer_bytes: int = 4 * 1024**3,
                           maximum_total_layer_bytes: int = 16 * 1024**3) -> VerifiedDockerArchive:
     """Verify a single Linux/amd64 Docker-save image and its raw or gzip layers.
@@ -148,17 +208,8 @@ def verify_docker_archive(path: Path, *, maximum_layer_bytes: int = 4 * 1024**3,
     if any(type(limit) is not int or limit <= 0 for limit in (maximum_layer_bytes, maximum_total_layer_bytes)):
         raise ValueError('Docker layer expansion bounds must be positive integers')
     path = Path(path)
-    archive_digest = _hash_file(path)
     try:
-        with path.open('rb') as raw:
-            raw.seek(0, os.SEEK_END)
-            size = raw.tell()
-            if size < 1024 or size % 512:
-                raise ValueError('Docker-save archive is truncated or unsupported')
-            raw.seek(-1024, os.SEEK_END)
-            if raw.read(1024) != b'\0' * 1024:
-                raise ValueError('Docker-save archive has no complete end marker')
-        with tarfile.open(path, 'r:') as archive:
+        with _preflighted_docker_stream(path) as (raw, archive_digest), tarfile.open(fileobj=raw, mode='r:') as archive:
             members = {}
             for index, member in enumerate(archive):
                 if index >= 100000:

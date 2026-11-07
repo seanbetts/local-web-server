@@ -9,12 +9,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from local_web_server.git_build import GitRepository
 from local_web_server.process_runner import ProcessCommand
 from local_web_server.models import BuildSpec, ReleaseEntry
 from local_web_server.production_build import (
-    DependencyCache, DependencyKey, ProductionBuilder, dependency_build_command, production_source_export, verify_docker_archive,
+    DependencyCache, DependencyKey, ProductionBuilder, dependency_build_command, production_source_export, verify_docker_archive, validate_tar_headers,
 )
 from tests.helpers import init_git_repo
 
@@ -102,7 +103,74 @@ def rewrite_archive(path, mutate):
             archive.addfile(info, io.BytesIO(body))
 
 
+def sparse_extension_archive(path, kind=tarfile.GNUTYPE_LONGNAME):
+    """A large claimed extension with sparse payload, never a large Python allocation."""
+    entry = tarfile.TarInfo('hostile-extension'); entry.type = kind; entry.size = 64 * 1024**2
+    with path.open('wb') as output:
+        output.write(entry.tobuf(format=tarfile.GNU_FORMAT))
+        output.seek(512 + entry.size)
+        output.write(bytes(1024))
+
+
 class ProductionBuildTests(unittest.TestCase):
+    def test_large_extensions_are_rejected_before_the_allocating_tar_parser(self):
+        with tempfile.TemporaryDirectory() as text:
+            path = Path(text)/'hostile.tar'
+            for kind, method in ((tarfile.GNUTYPE_LONGNAME, '_proc_gnulong'),
+                                 (tarfile.GNUTYPE_LONGLINK, '_proc_gnulong'),
+                                 (tarfile.XHDTYPE, '_proc_pax'),
+                                 (tarfile.XGLTYPE, '_proc_pax'),
+                                 (tarfile.GNUTYPE_SPARSE, '_proc_sparse')):
+                with self.subTest(kind=kind):
+                    sparse_extension_archive(path, kind)
+                    with patch.object(tarfile.TarInfo, method, side_effect=AssertionError('allocating extension parser entered')) as parser:
+                        with self.assertRaises(ValueError): verify_docker_archive(path)
+                        parser.assert_not_called()
+
+    def test_header_preflight_refuses_invalid_numeric_offsets_counts_and_end_markers(self):
+        def header(*, kind=tarfile.REGTYPE, size=0, name='entry', size_field=None):
+            entry=tarfile.TarInfo(name);entry.type=kind;entry.size=size
+            raw=bytearray(entry.tobuf(format=tarfile.USTAR_FORMAT))
+            if size_field is not None:raw[124:136]=size_field
+            raw[148:156]=b' '*8
+            raw[148:156]=f'{sum(raw):06o}'.encode()+b'\0 '
+            return bytes(raw)
+        zero=bytes(512)
+        cases={
+            'unknown-extension':header(kind=b'Z')+zero*2,
+            'base-256-size':header(size_field=b'\x80'+bytes(10)+b'\1')+zero*2,
+            'invalid-octal-size':header(size_field=b'00000000009\0')+zero*2,
+            'offset-outside-input':header(size=4096)+zero*2,
+            'partial-block':header()+zero*2+b'x',
+            'only-one-end-marker':header()+zero,
+            'nonzero-second-marker':header()+zero+b'x'*512,
+            'nonzero-trailer':header()+zero*2+b'x'*512+zero*2,
+            'data-bearing-directory':header(kind=tarfile.DIRTYPE,size=512)+zero*3,
+            'old-slash-directory-data':header(kind=tarfile.AREGTYPE,size=512,name='legacy/')+zero*3,
+        }
+        corrupt=bytearray(header());corrupt[0]^=1;cases['bad-checksum']=bytes(corrupt)+zero*2
+        with tempfile.TemporaryDirectory() as text:
+            path=Path(text)/'invalid.tar'
+            for label,content in cases.items():
+                with self.subTest(label=label):
+                    path.write_bytes(content)
+                    with patch('local_web_server.production_build.tarfile.open',side_effect=AssertionError('tar parser entered')) as parser:
+                        with self.assertRaises(ValueError):verify_docker_archive(path)
+                        parser.assert_not_called()
+        with self.assertRaises(ValueError):
+            validate_tar_headers(io.BytesIO(header()+header(name='other')+zero*2),2048,maximum_members=1)
+        with self.assertRaises(ValueError):
+            validate_tar_headers(io.BytesIO(header(kind=tarfile.DIRTYPE)+zero*2),1536)
+        validate_tar_headers(io.BytesIO(header(kind=tarfile.DIRTYPE)+zero*2),1536,allow_directories=True)
+
+    def test_runtime_archive_retains_regular_nul_and_directory_support(self):
+        with tempfile.TemporaryDirectory() as text:
+            path=Path(text)/'runtime.tar';expected=docker_archive(path,layer_body=b'linux layer',compression='gzip')
+            with tarfile.open(path,'a') as bundle:
+                for name,kind in [('cache/',tarfile.DIRTYPE),('legacy/',tarfile.AREGTYPE),('empty',tarfile.AREGTYPE)]:
+                    entry=tarfile.TarInfo(name);entry.type=kind;bundle.addfile(entry)
+            self.assertEqual(verify_docker_archive(path).image_digest,expected)
+
     def test_indexed_buildx_archive_binds_both_config_and_manifest_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'image.tar'
